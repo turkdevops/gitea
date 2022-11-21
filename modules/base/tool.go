@@ -24,6 +24,7 @@ import (
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/util"
 
 	"github.com/dustin/go-humanize"
 )
@@ -143,16 +144,16 @@ func FileSize(s int64) string {
 }
 
 // PrettyNumber produces a string form of the given number in base 10 with
-// commas after every three orders of magnitud
-func PrettyNumber(v int64) string {
-	return humanize.Comma(v)
+// commas after every three orders of magnitude
+func PrettyNumber(i interface{}) string {
+	return humanize.Comma(util.NumberIntoInt64(i))
 }
 
 // Subtract deals with subtraction of all types of number.
-func Subtract(left interface{}, right interface{}) interface{} {
+func Subtract(left, right interface{}) interface{} {
 	var rleft, rright int64
 	var fleft, fright float64
-	var isInt = true
+	isInt := true
 	switch v := left.(type) {
 	case int:
 		rleft = int64(v)
@@ -240,15 +241,6 @@ func Int64sToStrings(ints []int64) []string {
 	return strs
 }
 
-// Int64sToMap converts a slice of int64 to a int64 map.
-func Int64sToMap(ints []int64) map[int64]bool {
-	m := make(map[int64]bool)
-	for _, i := range ints {
-		m[i] = true
-	}
-	return m
-}
-
 // Int64sContains returns if a int64 in a slice of int64
 func Int64sContains(intsSlice []int64, a int64) bool {
 	for _, c := range intsSlice {
@@ -279,7 +271,7 @@ func EntryIcon(entry *git.TreeEntry) string {
 		}
 		return "file-symlink-file"
 	case entry.IsDir():
-		return "file-directory"
+		return "file-directory-fill"
 	case entry.IsSubModule():
 		return "file-submodule"
 	}

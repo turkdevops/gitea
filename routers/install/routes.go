@@ -5,10 +5,12 @@
 package install
 
 import (
+	goctx "context"
 	"fmt"
 	"net/http"
 	"path"
 
+	"code.gitea.io/gitea/modules/httpcache"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/public"
 	"code.gitea.io/gitea/modules/setting"
@@ -16,6 +18,7 @@ import (
 	"code.gitea.io/gitea/modules/web"
 	"code.gitea.io/gitea/modules/web/middleware"
 	"code.gitea.io/gitea/routers/common"
+	"code.gitea.io/gitea/routers/web/healthcheck"
 	"code.gitea.io/gitea/services/forms"
 
 	"gitea.com/go-chi/session"
@@ -27,8 +30,8 @@ func (d *dataStore) GetData() map[string]interface{} {
 	return *d
 }
 
-func installRecovery() func(next http.Handler) http.Handler {
-	var rnd = templates.HTMLRenderer()
+func installRecovery(ctx goctx.Context) func(next http.Handler) http.Handler {
+	_, rnd := templates.HTMLRenderer(ctx)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			defer func() {
@@ -38,35 +41,36 @@ func installRecovery() func(next http.Handler) http.Handler {
 				// should not panic any more.
 				defer func() {
 					if err := recover(); err != nil {
-						combinedErr := fmt.Sprintf("PANIC: %v\n%s", err, string(log.Stack(2)))
-						log.Error(combinedErr)
+						combinedErr := fmt.Sprintf("PANIC: %v\n%s", err, log.Stack(2))
+						log.Error("%s", combinedErr)
 						if setting.IsProd {
-							http.Error(w, http.StatusText(500), 500)
+							http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 						} else {
-							http.Error(w, combinedErr, 500)
+							http.Error(w, combinedErr, http.StatusInternalServerError)
 						}
 					}
 				}()
 
 				if err := recover(); err != nil {
-					combinedErr := fmt.Sprintf("PANIC: %v\n%s", err, string(log.Stack(2)))
-					log.Error("%v", combinedErr)
+					combinedErr := fmt.Sprintf("PANIC: %v\n%s", err, log.Stack(2))
+					log.Error("%s", combinedErr)
 
 					lc := middleware.Locale(w, req)
-					var store = dataStore{
+					store := dataStore{
 						"Language":       lc.Language(),
 						"CurrentURL":     setting.AppSubURL + req.URL.RequestURI(),
-						"i18n":           lc,
+						"locale":         lc,
 						"SignedUserID":   int64(0),
 						"SignedUserName": "",
 					}
 
+					httpcache.AddCacheControlToHeader(w.Header(), 0, "no-transform")
 					w.Header().Set(`X-Frame-Options`, setting.CORSConfig.XFrameOptions)
 
 					if !setting.IsProd {
 						store["ErrorMsg"] = combinedErr
 					}
-					err = rnd.HTML(w, 500, "status/500", templates.BaseVars().Merge(store))
+					err = rnd.HTML(w, http.StatusInternalServerError, "status/500", templates.BaseVars().Merge(store))
 					if err != nil {
 						log.Error("%v", err)
 					}
@@ -79,16 +83,16 @@ func installRecovery() func(next http.Handler) http.Handler {
 }
 
 // Routes registers the install routes
-func Routes() *web.Route {
+func Routes(ctx goctx.Context) *web.Route {
 	r := web.NewRoute()
 	for _, middle := range common.Middlewares() {
 		r.Use(middle)
 	}
 
-	r.Use(public.AssetsHandler(&public.Options{
+	r.Use(web.WrapWithPrefix(public.AssetsURLPathPrefix, public.AssetsHandlerFunc(&public.Options{
 		Directory: path.Join(setting.StaticRootPath, "public"),
-		Prefix:    "/assets",
-	}))
+		Prefix:    public.AssetsURLPathPrefix,
+	}), "InstallAssetsHandler"))
 
 	r.Use(session.Sessioner(session.Options{
 		Provider:       setting.SessionConfig.Provider,
@@ -102,12 +106,16 @@ func Routes() *web.Route {
 		Domain:         setting.SessionConfig.Domain,
 	}))
 
-	r.Use(installRecovery())
-	r.Use(Init)
+	r.Use(installRecovery(ctx))
+	r.Use(Init(ctx))
 	r.Get("/", Install)
 	r.Post("/", web.Bind(forms.InstallForm{}), SubmitInstall)
-	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		http.Redirect(w, req, setting.AppURL, http.StatusFound)
-	})
+	r.Get("/api/healthz", healthcheck.Check)
+
+	r.NotFound(web.Wrap(installNotFound))
 	return r
+}
+
+func installNotFound(w http.ResponseWriter, req *http.Request) {
+	http.Redirect(w, req, setting.AppURL, http.StatusFound)
 }

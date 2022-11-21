@@ -10,25 +10,26 @@ import (
 	"fmt"
 	"io"
 
-	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/models/db"
+	repo_model "code.gitea.io/gitea/models/repo"
 	"code.gitea.io/gitea/modules/storage"
 	"code.gitea.io/gitea/modules/upload"
+	"code.gitea.io/gitea/modules/util"
 
 	"github.com/google/uuid"
 )
 
 // NewAttachment creates a new attachment object, but do not verify.
-func NewAttachment(attach *models.Attachment, file io.Reader) (*models.Attachment, error) {
+func NewAttachment(attach *repo_model.Attachment, file io.Reader) (*repo_model.Attachment, error) {
 	if attach.RepoID == 0 {
 		return nil, fmt.Errorf("attachment %s should belong to a repository", attach.Name)
 	}
 
-	err := db.WithTx(func(ctx context.Context) error {
+	err := db.WithTx(db.DefaultContext, func(ctx context.Context) error {
 		attach.UUID = uuid.New().String()
 		size, err := storage.Attachments.Save(attach.RelativePath(), file, -1)
 		if err != nil {
-			return fmt.Errorf("Create: %v", err)
+			return fmt.Errorf("Create: %w", err)
 		}
 		attach.Size = size
 
@@ -39,18 +40,16 @@ func NewAttachment(attach *models.Attachment, file io.Reader) (*models.Attachmen
 }
 
 // UploadAttachment upload new attachment into storage and update database
-func UploadAttachment(file io.Reader, actorID, repoID, releaseID int64, fileName string, allowedTypes string) (*models.Attachment, error) {
+func UploadAttachment(file io.Reader, actorID, repoID, releaseID int64, fileName, allowedTypes string) (*repo_model.Attachment, error) {
 	buf := make([]byte, 1024)
-	n, _ := file.Read(buf)
-	if n > 0 {
-		buf = buf[:n]
-	}
+	n, _ := util.ReadAtMost(file, buf)
+	buf = buf[:n]
 
 	if err := upload.Verify(buf, fileName, allowedTypes); err != nil {
 		return nil, err
 	}
 
-	return NewAttachment(&models.Attachment{
+	return NewAttachment(&repo_model.Attachment{
 		RepoID:     repoID,
 		UploaderID: actorID,
 		ReleaseID:  releaseID,

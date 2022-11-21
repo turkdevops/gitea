@@ -5,17 +5,20 @@
 package comments
 
 import (
-	"code.gitea.io/gitea/models"
+	"context"
+
 	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/issues"
+	issues_model "code.gitea.io/gitea/models/issues"
+	repo_model "code.gitea.io/gitea/models/repo"
+	user_model "code.gitea.io/gitea/models/user"
 	"code.gitea.io/gitea/modules/notification"
 	"code.gitea.io/gitea/modules/timeutil"
 )
 
 // CreateIssueComment creates a plain issue comment.
-func CreateIssueComment(doer *models.User, repo *models.Repository, issue *models.Issue, content string, attachments []string) (*models.Comment, error) {
-	comment, err := models.CreateComment(&models.CreateCommentOptions{
-		Type:        models.CommentTypeComment,
+func CreateIssueComment(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, issue *issues_model.Issue, content string, attachments []string) (*issues_model.Comment, error) {
+	comment, err := issues_model.CreateComment(&issues_model.CreateCommentOptions{
+		Type:        issues_model.CommentTypeComment,
 		Doer:        doer,
 		Repo:        repo,
 		Issue:       issue,
@@ -25,46 +28,60 @@ func CreateIssueComment(doer *models.User, repo *models.Repository, issue *model
 	if err != nil {
 		return nil, err
 	}
-	err = issues.SaveIssueContentHistory(db.GetEngine(db.DefaultContext), doer.ID, issue.ID, comment.ID, timeutil.TimeStampNow(), comment.Content, true)
+
+	mentions, err := issues_model.FindAndUpdateIssueMentions(ctx, issue, doer, comment.Content)
 	if err != nil {
 		return nil, err
 	}
 
-	mentions, err := issue.FindAndUpdateIssueMentions(db.DefaultContext, doer, comment.Content)
-	if err != nil {
-		return nil, err
-	}
-
-	notification.NotifyCreateIssueComment(doer, repo, issue, comment, mentions)
+	notification.NotifyCreateIssueComment(ctx, doer, repo, issue, comment, mentions)
 
 	return comment, nil
 }
 
 // UpdateComment updates information of comment.
-func UpdateComment(c *models.Comment, doer *models.User, oldContent string) error {
-	if err := models.UpdateComment(c, doer); err != nil {
+func UpdateComment(ctx context.Context, c *issues_model.Comment, doer *user_model.User, oldContent string) error {
+	needsContentHistory := c.Content != oldContent &&
+		(c.Type == issues_model.CommentTypeComment || c.Type == issues_model.CommentTypeReview || c.Type == issues_model.CommentTypeCode)
+	if needsContentHistory {
+		hasContentHistory, err := issues_model.HasIssueContentHistory(ctx, c.IssueID, c.ID)
+		if err != nil {
+			return err
+		}
+		if !hasContentHistory {
+			if err = issues_model.SaveIssueContentHistory(ctx, c.PosterID, c.IssueID, c.ID,
+				c.CreatedUnix, oldContent, true); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := issues_model.UpdateComment(c, doer); err != nil {
 		return err
 	}
 
-	if c.Type == models.CommentTypeComment && c.Content != oldContent {
-		err := issues.SaveIssueContentHistory(db.GetEngine(db.DefaultContext), doer.ID, c.IssueID, c.ID, timeutil.TimeStampNow(), c.Content, false)
+	if needsContentHistory {
+		err := issues_model.SaveIssueContentHistory(ctx, doer.ID, c.IssueID, c.ID, timeutil.TimeStampNow(), c.Content, false)
 		if err != nil {
 			return err
 		}
 	}
 
-	notification.NotifyUpdateComment(doer, c, oldContent)
+	notification.NotifyUpdateComment(ctx, doer, c, oldContent)
 
 	return nil
 }
 
 // DeleteComment deletes the comment
-func DeleteComment(doer *models.User, comment *models.Comment) error {
-	if err := models.DeleteComment(comment); err != nil {
+func DeleteComment(ctx context.Context, doer *user_model.User, comment *issues_model.Comment) error {
+	err := db.AutoTx(ctx, func(ctx context.Context) error {
+		return issues_model.DeleteComment(ctx, comment)
+	})
+	if err != nil {
 		return err
 	}
 
-	notification.NotifyDeleteComment(doer, comment)
+	notification.NotifyDeleteComment(ctx, doer, comment)
 
 	return nil
 }

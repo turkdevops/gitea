@@ -5,6 +5,7 @@
 package misc
 
 import (
+	go_context "context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/markup"
 	"code.gitea.io/gitea/modules/setting"
 	api "code.gitea.io/gitea/modules/structs"
 	"code.gitea.io/gitea/modules/templates"
@@ -22,12 +24,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const AppURL = "http://localhost:3000/"
-const Repo = "gogits/gogs"
-const AppSubURL = AppURL + Repo + "/"
+const (
+	AppURL    = "http://localhost:3000/"
+	Repo      = "gogits/gogs"
+	AppSubURL = AppURL + Repo + "/"
+)
 
 func createContext(req *http.Request) (*context.Context, *httptest.ResponseRecorder) {
-	var rnd = templates.HTMLRenderer()
+	_, rnd := templates.HTMLRenderer(req.Context())
 	resp := httptest.NewRecorder()
 	c := &context.Context{
 		Req:    req,
@@ -35,6 +39,8 @@ func createContext(req *http.Request) (*context.Context, *httptest.ResponseRecor
 		Render: rnd,
 		Data:   make(map[string]interface{}),
 	}
+	defer c.Close()
+
 	return c, resp
 }
 
@@ -46,6 +52,11 @@ func wrap(ctx *context.Context) *context.APIContext {
 
 func TestAPI_RenderGFM(t *testing.T) {
 	setting.AppURL = AppURL
+	markup.Init(&markup.ProcessorHelper{
+		IsUsernameMentionable: func(ctx go_context.Context, username string) bool {
+			return username == "r-lyeh"
+		},
+	})
 
 	options := api.MarkdownOption{
 		Mode:    "gfm",

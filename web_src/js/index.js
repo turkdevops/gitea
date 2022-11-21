@@ -1,5 +1,7 @@
-import './publicpath.js';
+// bootstrap module must be the first one to be imported, it handles webpack lazy-loading and global errors
+import './bootstrap.js';
 
+import $ from 'jquery';
 import {initVueEnv} from './components/VueComponentLoader.js';
 import {initRepoActivityTopAuthorsChart} from './components/RepoActivityTopAuthors.vue';
 import {initDashboardRepoList} from './components/DashboardRepoList.js';
@@ -7,27 +9,28 @@ import {initDashboardRepoList} from './components/DashboardRepoList.js';
 import attachTribute from './features/tribute.js';
 import initGlobalCopyToClipboardListener from './features/clipboard.js';
 import initContextPopups from './features/contextpopup.js';
-import initGitGraph from './features/gitgraph.js';
+import initRepoGraphGit from './features/repo-graph.js';
 import initHeatmap from './features/heatmap.js';
 import initImageDiff from './features/imagediff.js';
-import initMigration from './features/migration.js';
-import initProject from './features/projects.js';
+import initRepoMigration from './features/repo-migration.js';
+import initRepoProject from './features/repo-projects.js';
 import initServiceWorker from './features/serviceworker.js';
 import initTableSort from './features/tablesort.js';
-import {initAdminUserListSearchForm} from './features/admin-users.js';
+import {initAdminUserListSearchForm} from './features/admin/users.js';
+import {initAdminConfigs} from './features/admin/config.js';
 import {initMarkupAnchors} from './markup/anchors.js';
 import {initNotificationCount, initNotificationsTable} from './features/notification.js';
-import {initLastCommitLoader} from './features/lastcommitloader.js';
-import {initIssueContentHistory} from './features/issue-content-history.js';
+import {initRepoIssueContentHistory} from './features/repo-issue-content.js';
 import {initStopwatch} from './features/stopwatch.js';
-import {initDiffShowMore} from './features/diff.js';
+import {initFindFileInRepo} from './features/repo-findfile.js';
 import {initCommentContent, initMarkupContent} from './markup/content.js';
+import initDiffFileTree from './features/repo-diff-filetree.js';
 
 import {initUserAuthLinkAccountView, initUserAuthOauth2} from './features/user-auth.js';
 import {
   initRepoDiffConversationForm,
   initRepoDiffFileViewToggle,
-  initRepoDiffReviewButton,
+  initRepoDiffReviewButton, initRepoDiffShowMore,
 } from './features/repo-diff.js';
 import {
   initRepoIssueDue,
@@ -36,10 +39,16 @@ import {
   initRepoIssueTimeTracking,
   initRepoIssueWipTitle,
   initRepoPullRequestMergeInstruction,
+  initRepoPullRequestAllowMaintainerEdit,
   initRepoPullRequestReview,
 } from './features/repo-issue.js';
-import {initRepoCommitButton} from './features/repo-commit.js';
 import {
+  initRepoEllipsisButton,
+  initRepoCommitLastCommitLoader,
+  initCommitStatuses,
+} from './features/repo-commit.js';
+import {
+  checkAppUrl,
   initFootLanguageMenu,
   initGlobalButtonClickOnEnter,
   initGlobalButtons,
@@ -49,10 +58,11 @@ import {
   initGlobalFormDirtyLeaveConfirm,
   initGlobalLinkActions,
   initHeadNavbarContentToggle,
+  initGlobalTooltips,
 } from './features/common-global.js';
 import {initRepoTopicBar} from './features/repo-home.js';
-import {initAdminEmails} from './features/admin-emails.js';
-import {initAdminCommon} from './features/admin-common.js';
+import {initAdminEmails} from './features/admin/emails.js';
+import {initAdminCommon} from './features/admin/common.js';
 import {initRepoTemplateSearch} from './features/repo-template.js';
 import {initRepoCodeView} from './features/repo-code.js';
 import {initSshKeyFormParser} from './features/sshkey-helper.js';
@@ -64,103 +74,128 @@ import {
   initRepoSettingsCollaboration,
   initRepoSettingSearchTeamBox,
 } from './features/repo-settings.js';
+import {initViewedCheckboxListenerFor} from './features/pull-view-file.js';
 import {initOrgTeamSearchRepoBox, initOrgTeamSettings} from './features/org-team.js';
-import {initUserAuthU2fAuth, initUserAuthU2fRegister} from './features/user-auth-u2f.js';
+import {initUserAuthWebAuthn, initUserAuthWebAuthnRegister} from './features/user-auth-webauthn.js';
 import {initRepoRelease, initRepoReleaseEditor} from './features/repo-release.js';
 import {initRepoEditor} from './features/repo-editor.js';
-import {initSearchUserBox} from './features/comp/SearchUserBox.js';
+import {initCompSearchUserBox} from './features/comp/SearchUserBox.js';
 import {initInstall} from './features/install.js';
-import {initWebHookEditor} from './features/comp/WebHookEditor.js';
+import {initCompWebHookEditor} from './features/comp/WebHookEditor.js';
 import {initCommonIssue} from './features/common-issue.js';
 import {initRepoBranchButton} from './features/repo-branch.js';
 import {initCommonOrganization} from './features/common-organization.js';
 import {initRepoWikiForm} from './features/repo-wiki.js';
 import {initRepoCommentForm, initRepository} from './features/repo-legacy.js';
+import {initFormattingReplacements} from './features/formatting.js';
+import {initMcaptcha} from './features/mcaptcha.js';
+import {initCopyContent} from './features/copycontent.js';
+
+// Run time-critical code as soon as possible. This is safe to do because this
+// script appears at the end of <body> and rendered HTML is accessible at that point.
+initFormattingReplacements();
 
 // Silence fomantic's error logging when tabs are used without a target content element
 $.fn.tab.settings.silent = true;
+// Disable the behavior of fomantic to toggle the checkbox when you press enter on a checkbox element.
+$.fn.checkbox.settings.enableEnterKey = false;
 
 initVueEnv();
-
-$(document).ready(async () => {
+$(document).ready(() => {
   initGlobalCommon();
-  initGlobalDropzone();
-  initGlobalLinkActions();
+
+  initGlobalTooltips();
+  initGlobalButtonClickOnEnter();
   initGlobalButtons();
-  initRepoBranchButton();
+  initGlobalCopyToClipboardListener();
+  initGlobalDropzone();
+  initGlobalEnterQuickSubmit();
+  initGlobalFormDirtyLeaveConfirm();
+  initGlobalLinkActions();
+
+  attachTribute(document.querySelectorAll('#content, .emoji-input'));
 
   initCommonIssue();
-
-  initSearchUserBox();
-  initRepoSettingSearchTeamBox();
-  initOrgTeamSearchRepoBox();
-
-  initGlobalButtonClickOnEnter();
-  initMarkupAnchors();
-  initCommentContent();
-  initRepoCommentForm();
-  initInstall();
-  initRepoArchiveLinks();
-  initRepository();
-  initMigration();
-  initRepoWikiForm();
-  initRepoEditor();
   initCommonOrganization();
-  initWebHookEditor();
-  initAdminCommon();
-  initRepoCodeView();
-  initRepoActivityTopAuthorsChart();
-  initDashboardRepoList();
-  initOrgTeamSettings();
-  initGlobalEnterQuickSubmit();
+
+  initCompSearchUserBox();
+  initCompWebHookEditor();
+
+  initInstall();
+
   initHeadNavbarContentToggle();
   initFootLanguageMenu();
-  initRepoTopicBar();
-  initUserAuthU2fAuth();
-  initUserAuthU2fRegister();
-  initRepoIssueList();
-  initRepoIssueTimeTracking();
-  initRepoIssueDue();
-  initRepoIssueWipTitle();
-  initRepoPullRequestReview();
-  initRepoMigrationStatusChecker();
-  initRepoTemplateSearch();
-  initRepoIssueReferenceRepositorySearch();
-  initContextPopups();
-  initTableSort();
-  initNotificationsTable();
-  initLastCommitLoader();
-  initRepoPullRequestMergeInstruction();
-  initRepoDiffFileViewToggle();
-  initRepoReleaseEditor();
-  initRepoRelease();
-  initDiffShowMore();
-  initIssueContentHistory();
-  initAdminUserListSearchForm();
-  initGlobalCopyToClipboardListener();
-  initUserAuthOauth2();
-  initRepoDiffReviewButton();
-  initRepoCommitButton();
-  initAdminEmails();
-  initGlobalEnterQuickSubmit();
-  initSshKeyFormParser();
-  initGlobalFormDirtyLeaveConfirm();
-  initUserSettings();
-  initRepoSettingsCollaboration();
-  initUserAuthLinkAccountView();
-  initRepoDiffConversationForm();
 
-  // parallel init of async loaded features
-  await Promise.all([
-    attachTribute(document.querySelectorAll('#content, .emoji-input')),
-    initGitGraph(),
-    initHeatmap(),
-    initProject(),
-    initServiceWorker(),
-    initNotificationCount(),
-    initStopwatch(),
-    initMarkupContent(),
-    initRepoSettingGitHook(),
-    initImageDiff(),
-  ]);
+  initCommentContent();
+  initContextPopups();
+  initHeatmap();
+  initImageDiff();
+  initMarkupAnchors();
+  initMarkupContent();
+  initServiceWorker();
+  initSshKeyFormParser();
+  initStopwatch();
+  initTableSort();
+  initFindFileInRepo();
+  initCopyContent();
+
+  initAdminCommon();
+  initAdminEmails();
+  initAdminUserListSearchForm();
+  initAdminConfigs();
+
+  initDashboardRepoList();
+
+  initNotificationCount();
+  initNotificationsTable();
+
+  initOrgTeamSearchRepoBox();
+  initOrgTeamSettings();
+
+  initRepoActivityTopAuthorsChart();
+  initRepoArchiveLinks();
+  initRepoBranchButton();
+  initRepoCodeView();
+  initRepoCommentForm();
+  initRepoEllipsisButton();
+  initRepoCommitLastCommitLoader();
+  initRepoDiffConversationForm();
+  initRepoDiffFileViewToggle();
+  initRepoDiffReviewButton();
+  initRepoDiffShowMore();
+  initDiffFileTree();
+  initRepoEditor();
+  initRepoGraphGit();
+  initRepoIssueContentHistory();
+  initRepoIssueDue();
+  initRepoIssueList();
+  initRepoIssueReferenceRepositorySearch();
+  initRepoIssueTimeTracking();
+  initRepoIssueWipTitle();
+  initRepoMigration();
+  initRepoMigrationStatusChecker();
+  initRepoProject();
+  initRepoPullRequestMergeInstruction();
+  initRepoPullRequestAllowMaintainerEdit();
+  initRepoPullRequestReview();
+  initRepoRelease();
+  initRepoReleaseEditor();
+  initRepoSettingGitHook();
+  initRepoSettingSearchTeamBox();
+  initRepoSettingsCollaboration();
+  initRepoTemplateSearch();
+  initRepoTopicBar();
+  initRepoWikiForm();
+  initRepository();
+
+  initCommitStatuses();
+  initMcaptcha();
+
+  initUserAuthLinkAccountView();
+  initUserAuthOauth2();
+  initUserAuthWebAuthn();
+  initUserAuthWebAuthnRegister();
+  initUserSettings();
+  initViewedCheckboxListenerFor();
+  checkAppUrl();
 });

@@ -10,16 +10,24 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"code.gitea.io/gitea/modules/util"
 )
 
 // Use at most this many bytes to determine Content Type.
 const sniffLen = 1024
 
-// SvgMimeType MIME type of SVG images.
-const SvgMimeType = "image/svg+xml"
+const (
+	// SvgMimeType MIME type of SVG images.
+	SvgMimeType = "image/svg+xml"
+	// ApplicationOctetStream MIME type of binary files.
+	ApplicationOctetStream = "application/octet-stream"
+)
 
-var svgTagRegex = regexp.MustCompile(`(?si)\A\s*(?:(<!--.*?-->|<!DOCTYPE\s+svg([\s:]+.*?>|>))\s*)*<svg[\s>\/]`)
-var svgTagInXMLRegex = regexp.MustCompile(`(?si)\A<\?xml\b.*?\?>\s*(?:(<!--.*?-->|<!DOCTYPE\s+svg([\s:]+.*?>|>))\s*)*<svg[\s>\/]`)
+var (
+	svgTagRegex      = regexp.MustCompile(`(?si)\A\s*(?:(<!--.*?-->|<!DOCTYPE\s+svg([\s:]+.*?>|>))\s*)*<svg[\s>\/]`)
+	svgTagInXMLRegex = regexp.MustCompile(`(?si)\A<\?xml\b.*?\?>\s*(?:(<!--.*?-->|<!DOCTYPE\s+svg([\s:]+.*?>|>))\s*)*<svg[\s>\/]`)
+)
 
 // SniffedType contains information about a blobs type.
 type SniffedType struct {
@@ -62,6 +70,16 @@ func (ct SniffedType) IsRepresentableAsText() bool {
 	return ct.IsText() || ct.IsSvgImage()
 }
 
+// IsBrowsableType returns whether a non-text type can be displayed in a browser
+func (ct SniffedType) IsBrowsableBinaryType() bool {
+	return ct.IsImage() || ct.IsSvgImage() || ct.IsPDF() || ct.IsVideo() || ct.IsAudio()
+}
+
+// GetMimeType returns the mime type
+func (ct SniffedType) GetMimeType() string {
+	return strings.SplitN(ct.contentType, ";", 2)[0]
+}
+
 // DetectContentType extends http.DetectContentType with more content types. Defaults to text/unknown if input is empty.
 func DetectContentType(data []byte) SniffedType {
 	if len(data) == 0 {
@@ -86,8 +104,8 @@ func DetectContentType(data []byte) SniffedType {
 // DetectContentTypeFromReader guesses the content type contained in the reader.
 func DetectContentTypeFromReader(r io.Reader) (SniffedType, error) {
 	buf := make([]byte, sniffLen)
-	n, err := r.Read(buf)
-	if err != nil && err != io.EOF {
+	n, err := util.ReadAtMost(r, buf)
+	if err != nil {
 		return SniffedType{}, fmt.Errorf("DetectContentTypeFromReader io error: %w", err)
 	}
 	buf = buf[:n]

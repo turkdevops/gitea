@@ -13,19 +13,18 @@ import (
 	"code.gitea.io/gitea/modules/json"
 )
 
-var (
-	// ErrInvalidReceiveHook FIXME
-	ErrInvalidReceiveHook = errors.New("Invalid JSON payload received over webhook")
-)
+// ErrInvalidReceiveHook FIXME
+var ErrInvalidReceiveHook = errors.New("Invalid JSON payload received over webhook")
 
 // Hook a hook is a web hook when one repository changed
 type Hook struct {
-	ID     int64             `json:"id"`
-	Type   string            `json:"type"`
-	URL    string            `json:"-"`
-	Config map[string]string `json:"config"`
-	Events []string          `json:"events"`
-	Active bool              `json:"active"`
+	ID                  int64             `json:"id"`
+	Type                string            `json:"type"`
+	URL                 string            `json:"-"`
+	Config              map[string]string `json:"config"`
+	Events              []string          `json:"events"`
+	AuthorizationHeader string            `json:"authorization_header"`
+	Active              bool              `json:"active"`
 	// swagger:strfmt date-time
 	Updated time.Time `json:"updated_at"`
 	// swagger:strfmt date-time
@@ -42,22 +41,24 @@ type CreateHookOptionConfig map[string]string
 // CreateHookOption options when create a hook
 type CreateHookOption struct {
 	// required: true
-	// enum: dingtalk,discord,gitea,gogs,msteams,slack,telegram,feishu,wechatwork
+	// enum: dingtalk,discord,gitea,gogs,msteams,slack,telegram,feishu,wechatwork,packagist
 	Type string `json:"type" binding:"Required"`
 	// required: true
-	Config       CreateHookOptionConfig `json:"config" binding:"Required"`
-	Events       []string               `json:"events"`
-	BranchFilter string                 `json:"branch_filter" binding:"GlobPattern"`
+	Config              CreateHookOptionConfig `json:"config" binding:"Required"`
+	Events              []string               `json:"events"`
+	BranchFilter        string                 `json:"branch_filter" binding:"GlobPattern"`
+	AuthorizationHeader string                 `json:"authorization_header"`
 	// default: false
 	Active bool `json:"active"`
 }
 
 // EditHookOption options when modify one hook
 type EditHookOption struct {
-	Config       map[string]string `json:"config"`
-	Events       []string          `json:"events"`
-	BranchFilter string            `json:"branch_filter" binding:"GlobPattern"`
-	Active       *bool             `json:"active"`
+	Config              map[string]string `json:"config"`
+	Events              []string          `json:"events"`
+	BranchFilter        string            `json:"branch_filter" binding:"GlobPattern"`
+	AuthorizationHeader string            `json:"authorization_header"`
+	Active              *bool             `json:"active"`
 }
 
 // Payloader payload is some part of one hook
@@ -112,6 +113,7 @@ var (
 	_ Payloader = &PullRequestPayload{}
 	_ Payloader = &RepositoryPayload{}
 	_ Payloader = &ReleasePayload{}
+	_ Payloader = &PackagePayload{}
 )
 
 // _________                        __
@@ -268,15 +270,16 @@ func (p *ReleasePayload) JSONPayload() ([]byte, error) {
 
 // PushPayload represents a payload information of push event.
 type PushPayload struct {
-	Ref        string           `json:"ref"`
-	Before     string           `json:"before"`
-	After      string           `json:"after"`
-	CompareURL string           `json:"compare_url"`
-	Commits    []*PayloadCommit `json:"commits"`
-	HeadCommit *PayloadCommit   `json:"head_commit"`
-	Repo       *Repository      `json:"repository"`
-	Pusher     *User            `json:"pusher"`
-	Sender     *User            `json:"sender"`
+	Ref          string           `json:"ref"`
+	Before       string           `json:"before"`
+	After        string           `json:"after"`
+	CompareURL   string           `json:"compare_url"`
+	Commits      []*PayloadCommit `json:"commits"`
+	TotalCommits int              `json:"total_commits"`
+	HeadCommit   *PayloadCommit   `json:"head_commit"`
+	Repo         *Repository      `json:"repository"`
+	Pusher       *User            `json:"pusher"`
+	Sender       *User            `json:"sender"`
 }
 
 // JSONPayload FIXME
@@ -398,6 +401,39 @@ type ReviewPayload struct {
 	Content string `json:"content"`
 }
 
+//  __      __.__ __   .__
+// /  \    /  \__|  | _|__|
+// \   \/\/   /  |  |/ /  |
+//  \        /|  |    <|  |
+//   \__/\  / |__|__|_ \__|
+//        \/          \/
+
+// HookWikiAction an action that happens to a wiki page
+type HookWikiAction string
+
+const (
+	// HookWikiCreated created
+	HookWikiCreated HookWikiAction = "created"
+	// HookWikiEdited edited
+	HookWikiEdited HookWikiAction = "edited"
+	// HookWikiDeleted deleted
+	HookWikiDeleted HookWikiAction = "deleted"
+)
+
+// WikiPayload payload for repository webhooks
+type WikiPayload struct {
+	Action     HookWikiAction `json:"action"`
+	Repository *Repository    `json:"repository"`
+	Sender     *User          `json:"sender"`
+	Page       string         `json:"page"`
+	Comment    string         `json:"comment"`
+}
+
+// JSONPayload JSON representation of the payload
+func (p *WikiPayload) JSONPayload() ([]byte, error) {
+	return json.MarshalIndent(p, "", " ")
+}
+
 //__________                           .__  __
 //\______   \ ____ ______   ____  _____|__|/  |_  ___________ ___.__.
 // |       _// __ \\____ \ /  _ \/  ___/  \   __\/  _ \_  __ <   |  |
@@ -426,4 +462,28 @@ type RepositoryPayload struct {
 // JSONPayload JSON representation of the payload
 func (p *RepositoryPayload) JSONPayload() ([]byte, error) {
 	return json.MarshalIndent(p, "", " ")
+}
+
+// HookPackageAction an action that happens to a package
+type HookPackageAction string
+
+const (
+	// HookPackageCreated created
+	HookPackageCreated HookPackageAction = "created"
+	// HookPackageDeleted deleted
+	HookPackageDeleted HookPackageAction = "deleted"
+)
+
+// PackagePayload represents a package payload
+type PackagePayload struct {
+	Action       HookPackageAction `json:"action"`
+	Repository   *Repository       `json:"repository"`
+	Package      *Package          `json:"package"`
+	Organization *User             `json:"organization"`
+	Sender       *User             `json:"sender"`
+}
+
+// JSONPayload implements Payload
+func (p *PackagePayload) JSONPayload() ([]byte, error) {
+	return json.MarshalIndent(p, "", "  ")
 }

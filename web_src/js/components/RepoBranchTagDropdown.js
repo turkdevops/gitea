@@ -1,4 +1,5 @@
-import Vue from 'vue';
+import {createApp, nextTick} from 'vue';
+import $ from 'jquery';
 import {vueDelimiters} from './VueComponentLoader.js';
 
 export function initRepoBranchTagDropdown(selector) {
@@ -9,11 +10,22 @@ export function initRepoBranchTagDropdown(selector) {
       items: [],
       mode: $data.data('mode'),
       searchTerm: '',
+      refName: '',
       noResults: '',
       canCreateBranch: false,
       menuVisible: false,
       createTag: false,
-      active: 0
+      isViewTag: false,
+      isViewBranch: false,
+      isViewTree: false,
+      active: 0,
+      branchForm: '',
+      branchURLPrefix: '',
+      branchURLSuffix: '',
+      tagURLPrefix: '',
+      tagURLSuffix: '',
+      setAction: false,
+      submitForm: false,
     };
     $data.find('.item').each(function () {
       data.items.push({
@@ -25,10 +37,14 @@ export function initRepoBranchTagDropdown(selector) {
       });
     });
     $data.remove();
-    new Vue({
-      el: this,
+
+    // eslint-disable-next-line unicorn/no-this-assignment
+    const elRoot = this;
+    const view = createApp({
       delimiters: vueDelimiters,
-      data,
+      data() {
+        return data;
+      },
       computed: {
         filteredItems() {
           const items = this.items.filter((item) => {
@@ -61,13 +77,33 @@ export function initRepoBranchTagDropdown(selector) {
       },
 
       beforeMount() {
-        this.noResults = this.$el.getAttribute('data-no-results');
-        this.canCreateBranch = this.$el.getAttribute('data-can-create-branch') === 'true';
+        this.noResults = elRoot.getAttribute('data-no-results');
+        this.canCreateBranch = elRoot.getAttribute('data-can-create-branch') === 'true';
+        this.branchForm = elRoot.getAttribute('data-branch-form');
+        switch (elRoot.getAttribute('data-view-type')) {
+          case 'tree':
+            this.isViewTree = true;
+            break;
+          case 'tag':
+            this.isViewTag = true;
+            break;
+          default:
+            this.isViewBranch = true;
+            break;
+        }
+        this.refName = elRoot.getAttribute('data-ref-name');
+        this.branchURLPrefix = elRoot.getAttribute('data-branch-url-prefix');
+        this.branchURLSuffix = elRoot.getAttribute('data-branch-url-suffix');
+        this.tagURLPrefix = elRoot.getAttribute('data-tag-url-prefix');
+        this.tagURLSuffix = elRoot.getAttribute('data-tag-url-suffix');
+        this.setAction = elRoot.getAttribute('data-set-action') === 'true';
+        this.submitForm = elRoot.getAttribute('data-submit-form') === 'true';
+
 
         document.body.addEventListener('click', (event) => {
-          if (this.$el.contains(event.target)) return;
+          if (elRoot.contains(event.target)) return;
           if (this.menuVisible) {
-            Vue.set(this, 'menuVisible', false);
+            this.menuVisible = false;
           }
         });
       },
@@ -79,14 +115,39 @@ export function initRepoBranchTagDropdown(selector) {
             prev.selected = false;
           }
           item.selected = true;
-          window.location.href = item.url;
+          const url = (item.tag) ? this.tagURLPrefix + item.url + this.tagURLSuffix : this.branchURLPrefix + item.url + this.branchURLSuffix;
+          if (this.branchForm === '') {
+            window.location.href = url;
+          } else {
+            this.isViewTree = false;
+            this.isViewTag = false;
+            this.isViewBranch = false;
+            this.$refs.dropdownRefName.textContent = item.name;
+            if (this.setAction) {
+              $(`#${this.branchForm}`).attr('action', url);
+            } else {
+              $(`#${this.branchForm} input[name="refURL"]`).val(url);
+            }
+            $(`#${this.branchForm} input[name="ref"]`).val(item.name);
+            if (item.tag) {
+              this.isViewTag = true;
+              $(`#${this.branchForm} input[name="refType"]`).val('tag');
+            } else {
+              this.isViewBranch = true;
+              $(`#${this.branchForm} input[name="refType"]`).val('branch');
+            }
+            if (this.submitForm) {
+              $(`#${this.branchForm}`).trigger('submit');
+            }
+            this.menuVisible = false;
+          }
         },
         createNewBranch() {
           if (!this.showCreateNewBranch) return;
           $(this.$refs.newBranchForm).trigger('submit');
         },
         focusSearchField() {
-          Vue.nextTick(() => {
+          nextTick(() => {
             this.$refs.searchField.focus();
           });
         },
@@ -156,5 +217,6 @@ export function initRepoBranchTagDropdown(selector) {
         }
       }
     });
+    view.mount(this);
   });
 }

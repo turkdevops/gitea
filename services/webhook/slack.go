@@ -7,9 +7,10 @@ package webhook
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
-	"code.gitea.io/gitea/models"
+	webhook_model "code.gitea.io/gitea/models/webhook"
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/json"
 	"code.gitea.io/gitea/modules/log"
@@ -26,7 +27,7 @@ type SlackMeta struct {
 }
 
 // GetSlackHook returns slack metadata
-func GetSlackHook(w *models.Webhook) *SlackMeta {
+func GetSlackHook(w *webhook_model.Webhook) *SlackMeta {
 	s := &SlackMeta{}
 	if err := json.Unmarshal([]byte(w.Meta), s); err != nil {
 		log.Error("webhook.GetSlackHook(%d): %v", w.ID, err)
@@ -85,7 +86,7 @@ func SlackShortTextFormatter(s string) string {
 }
 
 // SlackLinkFormatter creates a link compatible with slack
-func SlackLinkFormatter(url string, text string) string {
+func SlackLinkFormatter(url, text string) string {
 	return fmt.Sprintf("<%s|%s>", url, SlackTextFormatter(text))
 }
 
@@ -96,9 +97,7 @@ func SlackLinkToRef(repoURL, ref string) string {
 	return SlackLinkFormatter(url, refName)
 }
 
-var (
-	_ PayloadConvertor = &SlackPayload{}
-)
+var _ PayloadConvertor = &SlackPayload{}
 
 // Create implements PayloadConvertor Create method
 func (s *SlackPayload) Create(p *api.CreatePayload) (api.Payloader, error) {
@@ -158,6 +157,13 @@ func (s *SlackPayload) IssueComment(p *api.IssueCommentPayload) (api.Payloader, 
 	}}), nil
 }
 
+// Wiki implements PayloadConvertor Wiki method
+func (s *SlackPayload) Wiki(p *api.WikiPayload) (api.Payloader, error) {
+	text, _, _ := getWikiPayloadInfo(p, SlackLinkFormatter, true)
+
+	return s.createPayload(text, nil), nil
+}
+
 // Release implements PayloadConvertor Release method
 func (s *SlackPayload) Release(p *api.ReleasePayload) (api.Payloader, error) {
 	text, _ := getReleasePayloadInfo(p, SlackLinkFormatter, true)
@@ -173,10 +179,10 @@ func (s *SlackPayload) Push(p *api.PushPayload) (api.Payloader, error) {
 		commitString string
 	)
 
-	if len(p.Commits) == 1 {
+	if p.TotalCommits == 1 {
 		commitDesc = "1 new commit"
 	} else {
-		commitDesc = fmt.Sprintf("%d new commits", len(p.Commits))
+		commitDesc = fmt.Sprintf("%d new commits", p.TotalCommits)
 	}
 	if len(p.CompareURL) > 0 {
 		commitString = SlackLinkFormatter(p.CompareURL, commitDesc)
@@ -226,7 +232,7 @@ func (s *SlackPayload) PullRequest(p *api.PullRequestPayload) (api.Payloader, er
 }
 
 // Review implements PayloadConvertor Review method
-func (s *SlackPayload) Review(p *api.PullRequestPayload, event models.HookEventType) (api.Payloader, error) {
+func (s *SlackPayload) Review(p *api.PullRequestPayload, event webhook_model.HookEventType) (api.Payloader, error) {
 	senderLink := SlackLinkFormatter(setting.AppURL+p.Sender.UserName, p.Sender.UserName)
 	title := fmt.Sprintf("#%d %s", p.Index, p.PullRequest.Title)
 	titleLink := fmt.Sprintf("%s/pulls/%d", p.Repository.HTMLURL, p.Index)
@@ -273,7 +279,7 @@ func (s *SlackPayload) createPayload(text string, attachments []SlackAttachment)
 }
 
 // GetSlackPayload converts a slack webhook into a SlackPayload
-func GetSlackPayload(p api.Payloader, event models.HookEventType, meta string) (api.Payloader, error) {
+func GetSlackPayload(p api.Payloader, event webhook_model.HookEventType, meta string) (api.Payloader, error) {
 	s := new(SlackPayload)
 
 	slack := &SlackMeta{}
@@ -287,4 +293,14 @@ func GetSlackPayload(p api.Payloader, event models.HookEventType, meta string) (
 	s.Color = slack.Color
 
 	return convertPayloader(s, p, event)
+}
+
+var slackChannel = regexp.MustCompile(`^#?[a-z0-9_-]{1,80}$`)
+
+// IsValidSlackChannel validates a channel name conforms to what slack expects:
+// https://api.slack.com/methods/conversations.rename#naming
+// Conversation names can only contain lowercase letters, numbers, hyphens, and underscores, and must be 80 characters or less.
+// Gitea accepts if it starts with a #.
+func IsValidSlackChannel(name string) bool {
+	return slackChannel.MatchString(name)
 }

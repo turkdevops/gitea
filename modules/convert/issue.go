@@ -5,10 +5,15 @@
 package convert
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
-	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/models/db"
+	issues_model "code.gitea.io/gitea/models/issues"
+	repo_model "code.gitea.io/gitea/models/repo"
+	user_model "code.gitea.io/gitea/models/user"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 	api "code.gitea.io/gitea/modules/structs"
@@ -18,17 +23,17 @@ import (
 // it assumes some fields assigned with values:
 // Required - Poster, Labels,
 // Optional - Milestone, Assignee, PullRequest
-func ToAPIIssue(issue *models.Issue) *api.Issue {
-	if err := issue.LoadLabels(); err != nil {
+func ToAPIIssue(ctx context.Context, issue *issues_model.Issue) *api.Issue {
+	if err := issue.LoadLabels(ctx); err != nil {
 		return &api.Issue{}
 	}
-	if err := issue.LoadPoster(); err != nil {
+	if err := issue.LoadPoster(ctx); err != nil {
 		return &api.Issue{}
 	}
-	if err := issue.LoadRepo(); err != nil {
+	if err := issue.LoadRepo(ctx); err != nil {
 		return &api.Issue{}
 	}
-	if err := issue.Repo.GetOwner(); err != nil {
+	if err := issue.Repo.GetOwner(ctx); err != nil {
 		return &api.Issue{}
 	}
 
@@ -60,14 +65,14 @@ func ToAPIIssue(issue *models.Issue) *api.Issue {
 		apiIssue.Closed = issue.ClosedUnix.AsTimePtr()
 	}
 
-	if err := issue.LoadMilestone(); err != nil {
+	if err := issue.LoadMilestone(ctx); err != nil {
 		return &api.Issue{}
 	}
 	if issue.Milestone != nil {
 		apiIssue.Milestone = ToAPIMilestone(issue.Milestone)
 	}
 
-	if err := issue.LoadAssignees(); err != nil {
+	if err := issue.LoadAssignees(ctx); err != nil {
 		return &api.Issue{}
 	}
 	if len(issue.Assignees) > 0 {
@@ -77,7 +82,7 @@ func ToAPIIssue(issue *models.Issue) *api.Issue {
 		apiIssue.Assignee = ToUser(issue.Assignees[0], nil) // For compatibility, we're keeping the first assignee as `apiIssue.Assignee`
 	}
 	if issue.IsPull {
-		if err := issue.LoadPullRequest(); err != nil {
+		if err := issue.LoadPullRequest(ctx); err != nil {
 			return &api.Issue{}
 		}
 		apiIssue.PullRequest = &api.PullRequestMeta{
@@ -95,16 +100,16 @@ func ToAPIIssue(issue *models.Issue) *api.Issue {
 }
 
 // ToAPIIssueList converts an IssueList to API format
-func ToAPIIssueList(il models.IssueList) []*api.Issue {
+func ToAPIIssueList(ctx context.Context, il issues_model.IssueList) []*api.Issue {
 	result := make([]*api.Issue, len(il))
 	for i := range il {
-		result[i] = ToAPIIssue(il[i])
+		result[i] = ToAPIIssue(ctx, il[i])
 	}
 	return result
 }
 
 // ToTrackedTime converts TrackedTime to API format
-func ToTrackedTime(t *models.TrackedTime) (apiT *api.TrackedTime) {
+func ToTrackedTime(ctx context.Context, t *issues_model.TrackedTime) (apiT *api.TrackedTime) {
 	apiT = &api.TrackedTime{
 		ID:       t.ID,
 		IssueID:  t.IssueID,
@@ -114,23 +119,23 @@ func ToTrackedTime(t *models.TrackedTime) (apiT *api.TrackedTime) {
 		Created:  t.Created,
 	}
 	if t.Issue != nil {
-		apiT.Issue = ToAPIIssue(t.Issue)
+		apiT.Issue = ToAPIIssue(ctx, t.Issue)
 	}
 	if t.User != nil {
 		apiT.UserName = t.User.Name
 	}
-	return
+	return apiT
 }
 
 // ToStopWatches convert Stopwatch list to api.StopWatches
-func ToStopWatches(sws []*models.Stopwatch) (api.StopWatches, error) {
+func ToStopWatches(sws []*issues_model.Stopwatch) (api.StopWatches, error) {
 	result := api.StopWatches(make([]api.StopWatch, 0, len(sws)))
 
-	issueCache := make(map[int64]*models.Issue)
-	repoCache := make(map[int64]*models.Repository)
+	issueCache := make(map[int64]*issues_model.Issue)
+	repoCache := make(map[int64]*repo_model.Repository)
 	var (
-		issue *models.Issue
-		repo  *models.Repository
+		issue *issues_model.Issue
+		repo  *repo_model.Repository
 		ok    bool
 		err   error
 	)
@@ -138,14 +143,14 @@ func ToStopWatches(sws []*models.Stopwatch) (api.StopWatches, error) {
 	for _, sw := range sws {
 		issue, ok = issueCache[sw.IssueID]
 		if !ok {
-			issue, err = models.GetIssueByID(sw.IssueID)
+			issue, err = issues_model.GetIssueByID(db.DefaultContext, sw.IssueID)
 			if err != nil {
 				return nil, err
 			}
 		}
 		repo, ok = repoCache[issue.RepoID]
 		if !ok {
-			repo, err = models.GetRepositoryByID(issue.RepoID)
+			repo, err = repo_model.GetRepositoryByID(issue.RepoID)
 			if err != nil {
 				return nil, err
 			}
@@ -165,16 +170,16 @@ func ToStopWatches(sws []*models.Stopwatch) (api.StopWatches, error) {
 }
 
 // ToTrackedTimeList converts TrackedTimeList to API format
-func ToTrackedTimeList(tl models.TrackedTimeList) api.TrackedTimeList {
+func ToTrackedTimeList(ctx context.Context, tl issues_model.TrackedTimeList) api.TrackedTimeList {
 	result := make([]*api.TrackedTime, 0, len(tl))
 	for _, t := range tl {
-		result = append(result, ToTrackedTime(t))
+		result = append(result, ToTrackedTime(ctx, t))
 	}
 	return result
 }
 
 // ToLabel converts Label to API format
-func ToLabel(label *models.Label, repo *models.Repository, org *models.User) *api.Label {
+func ToLabel(label *issues_model.Label, repo *repo_model.Repository, org *user_model.User) *api.Label {
 	result := &api.Label{
 		ID:          label.ID,
 		Name:        label.Name,
@@ -191,7 +196,7 @@ func ToLabel(label *models.Label, repo *models.Repository, org *models.User) *ap
 		}
 	} else { // BelongsToOrg
 		if org != nil {
-			result.URL = fmt.Sprintf("%sapi/v1/orgs/%s/labels/%d", setting.AppURL, org.Name, label.ID)
+			result.URL = fmt.Sprintf("%sapi/v1/orgs/%s/labels/%d", setting.AppURL, url.PathEscape(org.Name), label.ID)
 		} else {
 			log.Error("ToLabel did not get org to calculate url for label with id '%d'", label.ID)
 		}
@@ -201,7 +206,7 @@ func ToLabel(label *models.Label, repo *models.Repository, org *models.User) *ap
 }
 
 // ToLabelList converts list of Label to API format
-func ToLabelList(labels []*models.Label, repo *models.Repository, org *models.User) []*api.Label {
+func ToLabelList(labels []*issues_model.Label, repo *repo_model.Repository, org *user_model.User) []*api.Label {
 	result := make([]*api.Label, len(labels))
 	for i := range labels {
 		result[i] = ToLabel(labels[i], repo, org)
@@ -210,7 +215,7 @@ func ToLabelList(labels []*models.Label, repo *models.Repository, org *models.Us
 }
 
 // ToAPIMilestone converts Milestone into API Format
-func ToAPIMilestone(m *models.Milestone) *api.Milestone {
+func ToAPIMilestone(m *issues_model.Milestone) *api.Milestone {
 	apiMilestone := &api.Milestone{
 		ID:           m.ID,
 		State:        m.State(),

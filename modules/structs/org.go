@@ -7,7 +7,7 @@ package structs
 // Organization represents an organization
 type Organization struct {
 	ID                        int64  `json:"id"`
-	UserName                  string `json:"username"`
+	Name                      string `json:"name"`
 	FullName                  string `json:"full_name"`
 	AvatarURL                 string `json:"avatar_url"`
 	Description               string `json:"description"`
@@ -15,9 +15,11 @@ type Organization struct {
 	Location                  string `json:"location"`
 	Visibility                string `json:"visibility"`
 	RepoAdminChangeTeamAccess bool   `json:"repo_admin_change_team_access"`
+	// deprecated
+	UserName string `json:"username"`
 }
 
-// OrganizationPermissions list differents users permissions on an organization
+// OrganizationPermissions list different users permissions on an organization
 type OrganizationPermissions struct {
 	IsOwner             bool `json:"is_owner"`
 	IsAdmin             bool `json:"is_admin"`

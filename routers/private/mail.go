@@ -5,11 +5,13 @@
 package private
 
 import (
+	stdCtx "context"
 	"fmt"
 	"net/http"
 	"strconv"
 
-	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/models/db"
+	user_model "code.gitea.io/gitea/models/user"
 	"code.gitea.io/gitea/modules/context"
 	"code.gitea.io/gitea/modules/json"
 	"code.gitea.io/gitea/modules/log"
@@ -44,7 +46,7 @@ func SendEmail(ctx *context.PrivateContext) {
 	var emails []string
 	if len(mail.To) > 0 {
 		for _, uname := range mail.To {
-			user, err := models.GetUserByName(uname)
+			user, err := user_model.GetUserByName(ctx, uname)
 			if err != nil {
 				err := fmt.Sprintf("Failed to get user information: %v", err)
 				log.Error(err)
@@ -59,8 +61,8 @@ func SendEmail(ctx *context.PrivateContext) {
 			}
 		}
 	} else {
-		err := models.IterateUser(func(user *models.User) error {
-			if len(user.Email) > 0 {
+		err := db.Iterate(ctx, nil, func(ctx stdCtx.Context, user *user_model.User) error {
+			if len(user.Email) > 0 && user.IsActive {
 				emails = append(emails, user.Email)
 			}
 			return nil
@@ -86,5 +88,5 @@ func sendEmail(ctx *context.PrivateContext, subject, message string, to []string
 
 	wasSent := strconv.Itoa(len(to))
 
-	ctx.PlainText(http.StatusOK, []byte(wasSent))
+	ctx.PlainText(http.StatusOK, wasSent)
 }

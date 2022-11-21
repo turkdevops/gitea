@@ -8,37 +8,30 @@ package admin
 import (
 	"fmt"
 	"net/http"
-	"net/url"
-	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 
-	"code.gitea.io/gitea/models"
+	activities_model "code.gitea.io/gitea/models/activities"
 	"code.gitea.io/gitea/modules/base"
 	"code.gitea.io/gitea/modules/context"
-	"code.gitea.io/gitea/modules/cron"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/json"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/process"
 	"code.gitea.io/gitea/modules/queue"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/timeutil"
+	"code.gitea.io/gitea/modules/translation"
 	"code.gitea.io/gitea/modules/updatechecker"
 	"code.gitea.io/gitea/modules/web"
+	"code.gitea.io/gitea/services/cron"
 	"code.gitea.io/gitea/services/forms"
-	"code.gitea.io/gitea/services/mailer"
-
-	"gitea.com/go-chi/session"
 )
 
 const (
-	tplDashboard base.TplName = "admin/dashboard"
-	tplConfig    base.TplName = "admin/config"
-	tplMonitor   base.TplName = "admin/monitor"
-	tplQueue     base.TplName = "admin/queue"
+	tplDashboard  base.TplName = "admin/dashboard"
+	tplMonitor    base.TplName = "admin/monitor"
+	tplStacktrace base.TplName = "admin/stacktrace"
+	tplQueue      base.TplName = "admin/queue"
 )
 
 var sysStatus struct {
@@ -83,7 +76,7 @@ var sysStatus struct {
 }
 
 func updateSystemStatus() {
-	sysStatus.Uptime = timeutil.TimeSincePro(setting.AppStartTime, "en")
+	sysStatus.Uptime = timeutil.TimeSincePro(setting.AppStartTime, translation.NewLocale("en-US"))
 
 	m := new(runtime.MemStats)
 	runtime.ReadMemStats(m)
@@ -125,7 +118,7 @@ func Dashboard(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.dashboard")
 	ctx.Data["PageIsAdmin"] = true
 	ctx.Data["PageIsAdminDashboard"] = true
-	ctx.Data["Stats"] = models.GetStatistic()
+	ctx.Data["Stats"] = activities_model.GetStatistic()
 	ctx.Data["NeedUpdate"] = updatechecker.GetNeedUpdate()
 	ctx.Data["RemoteVersion"] = updatechecker.GetRemoteVersion()
 	// FIXME: update periodically
@@ -141,7 +134,7 @@ func DashboardPost(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.dashboard")
 	ctx.Data["PageIsAdmin"] = true
 	ctx.Data["PageIsAdminDashboard"] = true
-	ctx.Data["Stats"] = models.GetStatistic()
+	ctx.Data["Stats"] = activities_model.GetStatistic()
 	updateSystemStatus()
 	ctx.Data["SysStatus"] = sysStatus
 
@@ -149,7 +142,7 @@ func DashboardPost(ctx *context.Context) {
 	if form.Op != "" {
 		task := cron.GetTask(form.Op)
 		if task != nil {
-			go task.RunWithUser(ctx.User, nil)
+			go task.RunWithUser(ctx.Doer, nil)
 			ctx.Flash.Success(ctx.Tr("admin.dashboard.task.started", ctx.Tr("admin.dashboard."+form.Op)))
 		} else {
 			ctx.Flash.Error(ctx.Tr("admin.dashboard.task.unknown", form.Op))
@@ -162,180 +155,42 @@ func DashboardPost(ctx *context.Context) {
 	}
 }
 
-// SendTestMail send test mail to confirm mail service is OK
-func SendTestMail(ctx *context.Context) {
-	email := ctx.FormString("email")
-	// Send a test email to the user's email address and redirect back to Config
-	if err := mailer.SendTestMail(email); err != nil {
-		ctx.Flash.Error(ctx.Tr("admin.config.test_mail_failed", email, err))
-	} else {
-		ctx.Flash.Info(ctx.Tr("admin.config.test_mail_sent", email))
-	}
-
-	ctx.Redirect(setting.AppSubURL + "/admin/config")
-}
-
-func shadowPasswordKV(cfgItem, splitter string) string {
-	fields := strings.Split(cfgItem, splitter)
-	for i := 0; i < len(fields); i++ {
-		if strings.HasPrefix(fields[i], "password=") {
-			fields[i] = "password=******"
-			break
-		}
-	}
-	return strings.Join(fields, splitter)
-}
-
-func shadowURL(provider, cfgItem string) string {
-	u, err := url.Parse(cfgItem)
-	if err != nil {
-		log.Error("Shadowing Password for %v failed: %v", provider, err)
-		return cfgItem
-	}
-	if u.User != nil {
-		atIdx := strings.Index(cfgItem, "@")
-		if atIdx > 0 {
-			colonIdx := strings.LastIndex(cfgItem[:atIdx], ":")
-			if colonIdx > 0 {
-				return cfgItem[:colonIdx+1] + "******" + cfgItem[atIdx:]
-			}
-		}
-	}
-	return cfgItem
-}
-
-func shadowPassword(provider, cfgItem string) string {
-	switch provider {
-	case "redis":
-		return shadowPasswordKV(cfgItem, ",")
-	case "mysql":
-		//root:@tcp(localhost:3306)/macaron?charset=utf8
-		atIdx := strings.Index(cfgItem, "@")
-		if atIdx > 0 {
-			colonIdx := strings.Index(cfgItem[:atIdx], ":")
-			if colonIdx > 0 {
-				return cfgItem[:colonIdx+1] + "******" + cfgItem[atIdx:]
-			}
-		}
-		return cfgItem
-	case "postgres":
-		// user=jiahuachen dbname=macaron port=5432 sslmode=disable
-		if !strings.HasPrefix(cfgItem, "postgres://") {
-			return shadowPasswordKV(cfgItem, " ")
-		}
-		fallthrough
-	case "couchbase":
-		return shadowURL(provider, cfgItem)
-		// postgres://pqgotest:password@localhost/pqgotest?sslmode=verify-full
-		// Notice: use shadowURL
-	}
-	return cfgItem
-}
-
-// Config show admin config page
-func Config(ctx *context.Context) {
-	ctx.Data["Title"] = ctx.Tr("admin.config")
-	ctx.Data["PageIsAdmin"] = true
-	ctx.Data["PageIsAdminConfig"] = true
-
-	ctx.Data["CustomConf"] = setting.CustomConf
-	ctx.Data["AppUrl"] = setting.AppURL
-	ctx.Data["Domain"] = setting.Domain
-	ctx.Data["OfflineMode"] = setting.OfflineMode
-	ctx.Data["DisableRouterLog"] = setting.DisableRouterLog
-	ctx.Data["RunUser"] = setting.RunUser
-	ctx.Data["RunMode"] = strings.Title(setting.RunMode)
-	if version, err := git.LocalVersion(); err == nil {
-		ctx.Data["GitVersion"] = version.Original()
-	}
-	ctx.Data["RepoRootPath"] = setting.RepoRootPath
-	ctx.Data["CustomRootPath"] = setting.CustomPath
-	ctx.Data["StaticRootPath"] = setting.StaticRootPath
-	ctx.Data["LogRootPath"] = setting.LogRootPath
-	ctx.Data["ScriptType"] = setting.ScriptType
-	ctx.Data["ReverseProxyAuthUser"] = setting.ReverseProxyAuthUser
-	ctx.Data["ReverseProxyAuthEmail"] = setting.ReverseProxyAuthEmail
-
-	ctx.Data["SSH"] = setting.SSH
-	ctx.Data["LFS"] = setting.LFS
-
-	ctx.Data["Service"] = setting.Service
-	ctx.Data["DbCfg"] = setting.Database
-	ctx.Data["Webhook"] = setting.Webhook
-
-	ctx.Data["MailerEnabled"] = false
-	if setting.MailService != nil {
-		ctx.Data["MailerEnabled"] = true
-		ctx.Data["Mailer"] = setting.MailService
-	}
-
-	ctx.Data["CacheAdapter"] = setting.CacheService.Adapter
-	ctx.Data["CacheInterval"] = setting.CacheService.Interval
-
-	ctx.Data["CacheConn"] = shadowPassword(setting.CacheService.Adapter, setting.CacheService.Conn)
-	ctx.Data["CacheItemTTL"] = setting.CacheService.TTL
-
-	sessionCfg := setting.SessionConfig
-	if sessionCfg.Provider == "VirtualSession" {
-		var realSession session.Options
-		if err := json.Unmarshal([]byte(sessionCfg.ProviderConfig), &realSession); err != nil {
-			log.Error("Unable to unmarshall session config for virtualed provider config: %s\nError: %v", sessionCfg.ProviderConfig, err)
-		}
-		sessionCfg.Provider = realSession.Provider
-		sessionCfg.ProviderConfig = realSession.ProviderConfig
-		sessionCfg.CookieName = realSession.CookieName
-		sessionCfg.CookiePath = realSession.CookiePath
-		sessionCfg.Gclifetime = realSession.Gclifetime
-		sessionCfg.Maxlifetime = realSession.Maxlifetime
-		sessionCfg.Secure = realSession.Secure
-		sessionCfg.Domain = realSession.Domain
-	}
-	sessionCfg.ProviderConfig = shadowPassword(sessionCfg.Provider, sessionCfg.ProviderConfig)
-	ctx.Data["SessionConfig"] = sessionCfg
-
-	ctx.Data["DisableGravatar"] = setting.DisableGravatar
-	ctx.Data["EnableFederatedAvatar"] = setting.EnableFederatedAvatar
-
-	ctx.Data["Git"] = setting.Git
-
-	type envVar struct {
-		Name, Value string
-	}
-
-	envVars := map[string]*envVar{}
-	if len(os.Getenv("GITEA_WORK_DIR")) > 0 {
-		envVars["GITEA_WORK_DIR"] = &envVar{"GITEA_WORK_DIR", os.Getenv("GITEA_WORK_DIR")}
-	}
-	if len(os.Getenv("GITEA_CUSTOM")) > 0 {
-		envVars["GITEA_CUSTOM"] = &envVar{"GITEA_CUSTOM", os.Getenv("GITEA_CUSTOM")}
-	}
-
-	ctx.Data["EnvVars"] = envVars
-	ctx.Data["Loggers"] = setting.GetLogDescriptions()
-	ctx.Data["EnableAccessLog"] = setting.EnableAccessLog
-	ctx.Data["AccessLogTemplate"] = setting.AccessLogTemplate
-	ctx.Data["DisableRouterLog"] = setting.DisableRouterLog
-	ctx.Data["EnableXORMLog"] = setting.EnableXORMLog
-	ctx.Data["LogSQL"] = setting.Database.LogSQL
-
-	ctx.HTML(http.StatusOK, tplConfig)
-}
-
 // Monitor show admin monitor page
 func Monitor(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.monitor")
 	ctx.Data["PageIsAdmin"] = true
 	ctx.Data["PageIsAdminMonitor"] = true
-	ctx.Data["Processes"] = process.GetManager().Processes()
+	ctx.Data["Processes"], ctx.Data["ProcessCount"] = process.GetManager().Processes(false, true)
 	ctx.Data["Entries"] = cron.ListTasks()
 	ctx.Data["Queues"] = queue.GetManager().ManagedQueues()
+
 	ctx.HTML(http.StatusOK, tplMonitor)
+}
+
+// GoroutineStacktrace show admin monitor goroutines page
+func GoroutineStacktrace(ctx *context.Context) {
+	ctx.Data["Title"] = ctx.Tr("admin.monitor")
+	ctx.Data["PageIsAdmin"] = true
+	ctx.Data["PageIsAdminMonitor"] = true
+
+	processStacks, processCount, goroutineCount, err := process.GetManager().ProcessStacktraces(false, false)
+	if err != nil {
+		ctx.ServerError("GoroutineStacktrace", err)
+		return
+	}
+
+	ctx.Data["ProcessStacks"] = processStacks
+
+	ctx.Data["GoroutineCount"] = goroutineCount
+	ctx.Data["ProcessCount"] = processCount
+
+	ctx.HTML(http.StatusOK, tplStacktrace)
 }
 
 // MonitorCancel cancels a process
 func MonitorCancel(ctx *context.Context) {
-	pid := ctx.ParamsInt64("pid")
-	process.GetManager().Cancel(pid)
+	pid := ctx.Params("pid")
+	process.GetManager().Cancel(process.IDType(pid))
 	ctx.JSON(http.StatusOK, map[string]interface{}{
 		"redirect": setting.AppSubURL + "/admin/monitor",
 	})
@@ -346,7 +201,7 @@ func Queue(ctx *context.Context) {
 	qid := ctx.ParamsInt64("qid")
 	mq := queue.GetManager().GetManagedQueue(qid)
 	if mq == nil {
-		ctx.Status(404)
+		ctx.Status(http.StatusNotFound)
 		return
 	}
 	ctx.Data["Title"] = ctx.Tr("admin.monitor.queue", mq.Name)
@@ -361,7 +216,7 @@ func WorkerCancel(ctx *context.Context) {
 	qid := ctx.ParamsInt64("qid")
 	mq := queue.GetManager().GetManagedQueue(qid)
 	if mq == nil {
-		ctx.Status(404)
+		ctx.Status(http.StatusNotFound)
 		return
 	}
 	pid := ctx.ParamsInt64("pid")
@@ -377,7 +232,7 @@ func Flush(ctx *context.Context) {
 	qid := ctx.ParamsInt64("qid")
 	mq := queue.GetManager().GetManagedQueue(qid)
 	if mq == nil {
-		ctx.Status(404)
+		ctx.Status(http.StatusNotFound)
 		return
 	}
 	timeout, err := time.ParseDuration(ctx.FormString("timeout"))
@@ -394,12 +249,36 @@ func Flush(ctx *context.Context) {
 	ctx.Redirect(setting.AppSubURL + "/admin/monitor/queue/" + strconv.FormatInt(qid, 10))
 }
 
+// Pause pauses a queue
+func Pause(ctx *context.Context) {
+	qid := ctx.ParamsInt64("qid")
+	mq := queue.GetManager().GetManagedQueue(qid)
+	if mq == nil {
+		ctx.Status(404)
+		return
+	}
+	mq.Pause()
+	ctx.Redirect(setting.AppSubURL + "/admin/monitor/queue/" + strconv.FormatInt(qid, 10))
+}
+
+// Resume resumes a queue
+func Resume(ctx *context.Context) {
+	qid := ctx.ParamsInt64("qid")
+	mq := queue.GetManager().GetManagedQueue(qid)
+	if mq == nil {
+		ctx.Status(404)
+		return
+	}
+	mq.Resume()
+	ctx.Redirect(setting.AppSubURL + "/admin/monitor/queue/" + strconv.FormatInt(qid, 10))
+}
+
 // AddWorkers adds workers to a worker group
 func AddWorkers(ctx *context.Context) {
 	qid := ctx.ParamsInt64("qid")
 	mq := queue.GetManager().GetManagedQueue(qid)
 	if mq == nil {
-		ctx.Status(404)
+		ctx.Status(http.StatusNotFound)
 		return
 	}
 	number := ctx.FormInt("number")
@@ -429,7 +308,7 @@ func SetQueueSettings(ctx *context.Context) {
 	qid := ctx.ParamsInt64("qid")
 	mq := queue.GetManager().GetManagedQueue(qid)
 	if mq == nil {
-		ctx.Status(404)
+		ctx.Status(http.StatusNotFound)
 		return
 	}
 	if _, ok := mq.Managed.(queue.ManagedPool); !ok {

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"code.gitea.io/gitea/models"
+	webhook_model "code.gitea.io/gitea/models/webhook"
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/json"
 	"code.gitea.io/gitea/modules/log"
@@ -32,7 +32,7 @@ type (
 )
 
 // GetTelegramHook returns telegram metadata
-func GetTelegramHook(w *models.Webhook) *TelegramMeta {
+func GetTelegramHook(w *webhook_model.Webhook) *TelegramMeta {
 	s := &TelegramMeta{}
 	if err := json.Unmarshal([]byte(w.Meta), s); err != nil {
 		log.Error("webhook.GetTelegramHook(%d): %v", w.ID, err)
@@ -40,9 +40,7 @@ func GetTelegramHook(w *models.Webhook) *TelegramMeta {
 	return s
 }
 
-var (
-	_ PayloadConvertor = &TelegramPayload{}
-)
+var _ PayloadConvertor = &TelegramPayload{}
 
 // JSONPayload Marshals the TelegramPayload to json
 func (t *TelegramPayload) JSONPayload() ([]byte, error) {
@@ -91,11 +89,11 @@ func (t *TelegramPayload) Push(p *api.PushPayload) (api.Payloader, error) {
 	)
 
 	var titleLink string
-	if len(p.Commits) == 1 {
+	if p.TotalCommits == 1 {
 		commitDesc = "1 new commit"
 		titleLink = p.Commits[0].URL
 	} else {
-		commitDesc = fmt.Sprintf("%d new commits", len(p.Commits))
+		commitDesc = fmt.Sprintf("%d new commits", p.TotalCommits)
 		titleLink = p.CompareURL
 	}
 	if titleLink == "" {
@@ -143,7 +141,7 @@ func (t *TelegramPayload) PullRequest(p *api.PullRequestPayload) (api.Payloader,
 }
 
 // Review implements PayloadConvertor Review method
-func (t *TelegramPayload) Review(p *api.PullRequestPayload, event models.HookEventType) (api.Payloader, error) {
+func (t *TelegramPayload) Review(p *api.PullRequestPayload, event webhook_model.HookEventType) (api.Payloader, error) {
 	var text, attachmentText string
 	switch p.Action {
 	case api.HookIssueReviewed:
@@ -173,6 +171,13 @@ func (t *TelegramPayload) Repository(p *api.RepositoryPayload) (api.Payloader, e
 	return nil, nil
 }
 
+// Wiki implements PayloadConvertor Wiki method
+func (t *TelegramPayload) Wiki(p *api.WikiPayload) (api.Payloader, error) {
+	text, _, _ := getWikiPayloadInfo(p, htmlLinkFormatter, true)
+
+	return createTelegramPayload(text), nil
+}
+
 // Release implements PayloadConvertor Release method
 func (t *TelegramPayload) Release(p *api.ReleasePayload) (api.Payloader, error) {
 	text, _ := getReleasePayloadInfo(p, htmlLinkFormatter, true)
@@ -181,7 +186,7 @@ func (t *TelegramPayload) Release(p *api.ReleasePayload) (api.Payloader, error) 
 }
 
 // GetTelegramPayload converts a telegram webhook into a TelegramPayload
-func GetTelegramPayload(p api.Payloader, event models.HookEventType, meta string) (api.Payloader, error) {
+func GetTelegramPayload(p api.Payloader, event webhook_model.HookEventType, meta string) (api.Payloader, error) {
 	return convertPayloader(new(TelegramPayload), p, event)
 }
 

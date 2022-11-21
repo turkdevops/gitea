@@ -40,6 +40,8 @@ type PullReview struct {
 	CodeCommentsCount int             `json:"comments_count"`
 	// swagger:strfmt date-time
 	Submitted time.Time `json:"submitted_at"`
+	// swagger:strfmt date-time
+	Updated time.Time `json:"updated_at"`
 
 	HTMLURL     string `json:"html_url"`
 	HTMLPullURL string `json:"pull_request_url"`
@@ -97,6 +99,7 @@ type SubmitPullReviewOptions struct {
 // DismissPullReviewOptions are options to dismiss a pull review
 type DismissPullReviewOptions struct {
 	Message string `json:"message"`
+	Priors  bool   `json:"priors"`
 }
 
 // PullReviewRequestOptions are options to add or remove pull review requests

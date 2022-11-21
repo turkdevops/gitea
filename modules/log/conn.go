@@ -108,7 +108,7 @@ func NewConn() LoggerProvider {
 func (log *ConnLogger) Init(jsonconfig string) error {
 	err := json.Unmarshal([]byte(jsonconfig), log)
 	if err != nil {
-		return fmt.Errorf("Unable to parse JSON: %v", err)
+		return fmt.Errorf("Unable to parse JSON: %w", err)
 	}
 	log.NewWriterLogger(&connWriter{
 		ReconnectOnMsg: log.ReconnectOnMsg,
@@ -117,6 +117,11 @@ func (log *ConnLogger) Init(jsonconfig string) error {
 		Addr:           log.Addr,
 	}, log.Level)
 	return nil
+}
+
+// Content returns the content accumulated in the content provider
+func (log *ConnLogger) Content() (string, error) {
+	return "", fmt.Errorf("not supported")
 }
 
 // Flush does nothing for this implementation

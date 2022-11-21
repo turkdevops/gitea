@@ -10,7 +10,7 @@ type CreateUserOption struct {
 	SourceID  int64  `json:"source_id"`
 	LoginName string `json:"login_name"`
 	// required: true
-	Username string `json:"username" binding:"Required;AlphaDashDot;MaxSize(40)"`
+	Username string `json:"username" binding:"Required;Username;MaxSize(40)"`
 	FullName string `json:"full_name" binding:"MaxSize(100)"`
 	// required: true
 	// swagger:strfmt email
@@ -19,6 +19,7 @@ type CreateUserOption struct {
 	Password           string `json:"password" binding:"Required;MaxSize(255)"`
 	MustChangePassword *bool  `json:"must_change_password"`
 	SendNotify         bool   `json:"send_notify"`
+	Restricted         *bool  `json:"restricted"`
 	Visibility         string `json:"visibility" binding:"In(,public,limited,private)"`
 }
 

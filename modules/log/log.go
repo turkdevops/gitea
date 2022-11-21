@@ -219,9 +219,9 @@ func ReleaseReopen() error {
 		logger := value.(*MultiChannelledLogger)
 		if err := logger.ReleaseReopen(); err != nil {
 			if accumulatedErr == nil {
-				accumulatedErr = fmt.Errorf("Error reopening %s: %v", key.(string), err)
+				accumulatedErr = fmt.Errorf("Error reopening %s: %w", key.(string), err)
 			} else {
-				accumulatedErr = fmt.Errorf("Error reopening %s: %v & %v", key.(string), err, accumulatedErr)
+				accumulatedErr = fmt.Errorf("Error reopening %s: %v & %w", key.(string), err, accumulatedErr)
 			}
 		}
 		return true
@@ -288,4 +288,8 @@ func (l *LoggerAsWriter) Log(msg string) {
 func init() {
 	_, filename, _, _ := runtime.Caller(0)
 	prefix = strings.TrimSuffix(filename, "modules/log/log.go")
+	if prefix == filename {
+		// in case the source code file is moved, we can not trim the suffix, the code above should also be updated.
+		panic("unable to detect correct package prefix, please update file: " + filename)
+	}
 }

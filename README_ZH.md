@@ -33,11 +33,17 @@
   <a href="https://opensource.org/licenses/MIT" title="License: MIT">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg">
   </a>
+  <a href="https://gitpod.io/#https://github.com/go-gitea/gitea">
+  <img
+    src="https://img.shields.io/badge/Contribute%20with-Gitpod-908a85?logo=gitpod"
+    alt="Contribute with Gitpod"
+  />
+  </a>
   <a href="https://crowdin.com/project/gitea" title="Crowdin">
     <img src="https://badges.crowdin.net/gitea/localized.svg">
   </a>
-  <a href="https://www.tickgit.com/browse?repo=github.com/go-gitea/gitea" title="TODOs">
-    <img src="https://badgen.net/https/api.tickgit.com/badgen/github.com/go-gitea/gitea">
+  <a href="https://www.tickgit.com/browse?repo=github.com/go-gitea/gitea&branch=main" title="TODOs">
+    <img src="https://badgen.net/https/api.tickgit.com/badgen/github.com/go-gitea/gitea/main">
   </a>
   <a href="https://img.shields.io/bountysource/team/gitea" title="Bountysource">
     <img src="https://img.shields.io/bountysource/team/gitea/activity">
@@ -45,7 +51,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">View the english version of this document</a>
+  <a href="README.md">View this document in English</a>
 </p>
 
 ## 目标

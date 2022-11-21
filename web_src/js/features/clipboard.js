@@ -1,27 +1,23 @@
-// For all DOM elements with [data-clipboard-target] or [data-clipboard-text], this copy-to-clipboard will work for them
+import {showTemporaryTooltip} from '../modules/tippy.js';
 
-// TODO: replace these with toast-style notifications
-function onSuccess(btn) {
-  if (!btn.dataset.content) return;
-  $(btn).popup('destroy');
-  const oldContent = btn.dataset.content;
-  btn.dataset.content = btn.dataset.success;
-  $(btn).popup('show');
-  btn.dataset.content = oldContent;
-}
-function onError(btn) {
-  if (!btn.dataset.content) return;
-  const oldContent = btn.dataset.content;
-  $(btn).popup('destroy');
-  btn.dataset.content = btn.dataset.error;
-  $(btn).popup('show');
-  btn.dataset.content = oldContent;
+const {copy_success, copy_error} = window.config.i18n;
+
+export async function copyToClipboard(content) {
+  if (content instanceof Blob) {
+    const item = new window.ClipboardItem({[content.type]: content});
+    await navigator.clipboard.write([item]);
+  } else { // text
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      return fallbackCopyToClipboard(content);
+    }
+  }
+  return true;
 }
 
-/**
- * Fallback to use if navigator.clipboard doesn't exist.
- * Achieved via creating a temporary textarea element, selecting the text, and using document.execCommand.
- */
+// Fallback to use if navigator.clipboard doesn't exist. Achieved via creating
+// a temporary textarea element, selecting the text, and using document.execCommand
 function fallbackCopyToClipboard(text) {
   if (!document.execCommand) return false;
 
@@ -37,7 +33,8 @@ function fallbackCopyToClipboard(text) {
 
   tempTextArea.select();
 
-  // if unsecure (not https), there is no navigator.clipboard, but we can still use document.execCommand to copy to clipboard
+  // if unsecure (not https), there is no navigator.clipboard, but we can still
+  // use document.execCommand to copy to clipboard
   const success = document.execCommand('copy');
 
   document.body.removeChild(tempTextArea);
@@ -45,29 +42,24 @@ function fallbackCopyToClipboard(text) {
   return success;
 }
 
+// For all DOM elements with [data-clipboard-target] or [data-clipboard-text],
+// this copy-to-clipboard will work for them
 export default function initGlobalCopyToClipboardListener() {
-  document.addEventListener('click', async (e) => {
+  document.addEventListener('click', (e) => {
     let target = e.target;
-    // in case <button data-clipboard-text><svg></button>, so we just search up to 3 levels for performance.
+    // in case <button data-clipboard-text><svg></button>, so we just search
+    // up to 3 levels for performance
     for (let i = 0; i < 3 && target; i++) {
-      let text;
-      if (target.dataset.clipboardText) {
-        text = target.dataset.clipboardText;
-      } else if (target.dataset.clipboardTarget) {
-        text = document.querySelector(target.dataset.clipboardTarget)?.value;
-      }
+      const text = target.getAttribute('data-clipboard-text') || document.querySelector(target.getAttribute('data-clipboard-target'))?.value;
+
       if (text) {
         e.preventDefault();
-        try {
-          await navigator.clipboard.writeText(text);
-          onSuccess(target);
-        } catch {
-          if (fallbackCopyToClipboard(text)) {
-            onSuccess(target);
-          } else {
-            onError(target);
-          }
-        }
+
+        (async() => {
+          const success = await copyToClipboard(text);
+          showTemporaryTooltip(target, success ? copy_success : copy_error);
+        })();
+
         break;
       }
       target = target.parentElement;

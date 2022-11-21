@@ -8,12 +8,10 @@ import (
 	"context"
 	"reflect"
 	"runtime"
-	"strings"
 
 	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/modules/appstate"
+	asymkey_model "code.gitea.io/gitea/models/asymkey"
 	"code.gitea.io/gitea/modules/cache"
-	"code.gitea.io/gitea/modules/cron"
 	"code.gitea.io/gitea/modules/eventsource"
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/highlight"
@@ -23,30 +21,34 @@ import (
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/markup"
 	"code.gitea.io/gitea/modules/markup/external"
-	repo_migrations "code.gitea.io/gitea/modules/migrations"
 	"code.gitea.io/gitea/modules/notification"
-	repo_module "code.gitea.io/gitea/modules/repository"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/ssh"
 	"code.gitea.io/gitea/modules/storage"
 	"code.gitea.io/gitea/modules/svg"
-	"code.gitea.io/gitea/modules/task"
+	"code.gitea.io/gitea/modules/system"
+	"code.gitea.io/gitea/modules/templates"
 	"code.gitea.io/gitea/modules/translation"
+	"code.gitea.io/gitea/modules/util"
 	"code.gitea.io/gitea/modules/web"
+	packages_router "code.gitea.io/gitea/routers/api/packages"
 	apiv1 "code.gitea.io/gitea/routers/api/v1"
 	"code.gitea.io/gitea/routers/common"
 	"code.gitea.io/gitea/routers/private"
 	web_routers "code.gitea.io/gitea/routers/web"
-	"code.gitea.io/gitea/services/archiver"
 	"code.gitea.io/gitea/services/auth"
 	"code.gitea.io/gitea/services/auth/source/oauth2"
+	"code.gitea.io/gitea/services/automerge"
+	"code.gitea.io/gitea/services/cron"
 	"code.gitea.io/gitea/services/mailer"
+	markup_service "code.gitea.io/gitea/services/markup"
+	repo_migrations "code.gitea.io/gitea/services/migrations"
 	mirror_service "code.gitea.io/gitea/services/mirror"
 	pull_service "code.gitea.io/gitea/services/pull"
-	"code.gitea.io/gitea/services/repository"
+	repo_service "code.gitea.io/gitea/services/repository"
+	"code.gitea.io/gitea/services/repository/archiver"
+	"code.gitea.io/gitea/services/task"
 	"code.gitea.io/gitea/services/webhook"
-
-	"gitea.com/go-chi/session"
 )
 
 func mustInit(fn func() error) {
@@ -71,119 +73,127 @@ func mustInitCtx(ctx context.Context, fn func(ctx context.Context) error) {
 func InitGitServices() {
 	setting.NewServices()
 	mustInit(storage.Init)
-	mustInit(repository.NewContext)
+	mustInit(repo_service.Init)
 }
 
-func syncAppPathForGit(ctx context.Context) error {
-	runtimeState := new(appstate.RuntimeState)
-	if err := appstate.AppState.Get(runtimeState); err != nil {
+func syncAppConfForGit(ctx context.Context) error {
+	runtimeState := new(system.RuntimeState)
+	if err := system.AppState.Get(runtimeState); err != nil {
 		return err
 	}
+
+	updated := false
 	if runtimeState.LastAppPath != setting.AppPath {
 		log.Info("AppPath changed from '%s' to '%s'", runtimeState.LastAppPath, setting.AppPath)
+		runtimeState.LastAppPath = setting.AppPath
+		updated = true
+	}
+	if runtimeState.LastCustomConf != setting.CustomConf {
+		log.Info("CustomConf changed from '%s' to '%s'", runtimeState.LastCustomConf, setting.CustomConf)
+		runtimeState.LastCustomConf = setting.CustomConf
+		updated = true
+	}
 
+	if updated {
 		log.Info("re-sync repository hooks ...")
-		mustInitCtx(ctx, repo_module.SyncRepositoryHooks)
+		mustInitCtx(ctx, repo_service.SyncRepositoryHooks)
 
 		log.Info("re-write ssh public keys ...")
-		mustInit(models.RewriteAllPublicKeys)
+		mustInit(asymkey_model.RewriteAllPublicKeys)
 
-		runtimeState.LastAppPath = setting.AppPath
-		return appstate.AppState.Set(runtimeState)
+		return system.AppState.Set(runtimeState)
 	}
 	return nil
 }
 
-// GlobalInit is for global configuration reload-able.
-func GlobalInit(ctx context.Context) {
-	setting.NewContext()
+// GlobalInitInstalled is for global installed configuration.
+func GlobalInitInstalled(ctx context.Context) {
 	if !setting.InstallLock {
 		log.Fatal("Gitea is not installed")
 	}
 
-	mustInitCtx(ctx, git.Init)
-	log.Info(git.VersionInfo())
-
-	git.CheckLFSVersion()
+	mustInitCtx(ctx, git.InitFull)
+	log.Info("Git Version: %s (home: %s)", git.VersionInfo(), git.HomeDir())
 	log.Info("AppPath: %s", setting.AppPath)
 	log.Info("AppWorkPath: %s", setting.AppWorkPath)
 	log.Info("Custom path: %s", setting.CustomPath)
 	log.Info("Log path: %s", setting.LogRootPath)
 	log.Info("Configuration file: %s", setting.CustomConf)
-	log.Info("Run Mode: %s", strings.Title(setting.RunMode))
+	log.Info("Run Mode: %s", util.ToTitleCase(setting.RunMode))
 
 	// Setup i18n
-	translation.InitLocales()
+	translation.InitLocales(ctx)
 
-	InitGitServices()
-	mailer.NewContext()
+	setting.NewServices()
+	mustInit(storage.Init)
+
+	mailer.NewContext(ctx)
 	mustInit(cache.NewContext)
 	notification.NewContext()
 	mustInit(archiver.Init)
 
 	highlight.NewContext()
 	external.RegisterRenderers()
-	markup.Init()
+	markup.Init(markup_service.ProcessorHelper())
 
 	if setting.EnableSQLite3 {
-		log.Info("SQLite3 Supported")
+		log.Info("SQLite3 support is enabled")
 	} else if setting.Database.UseSQLite3 {
-		log.Fatal("SQLite3 is set in settings but NOT Supported")
+		log.Fatal("SQLite3 support is disabled, but it is used for database setting. Please get or build a Gitea release with SQLite3 support.")
 	}
 
 	mustInitCtx(ctx, common.InitDBEngine)
 	log.Info("ORM engine initialization successful!")
-	mustInit(appstate.Init)
+	mustInit(system.Init)
 	mustInit(oauth2.Init)
 
-	models.NewRepoContext()
+	mustInit(models.Init)
+	mustInit(repo_service.Init)
 
 	// Booting long running goroutines.
-	cron.NewContext()
 	issue_indexer.InitIssueIndexer(false)
 	code_indexer.Init()
 	mustInit(stats_indexer.Init)
 
 	mirror_service.InitSyncMirrors()
-	webhook.InitDeliverHooks()
+	mustInit(webhook.Init)
 	mustInit(pull_service.Init)
+	mustInit(automerge.Init)
 	mustInit(task.Init)
 	mustInit(repo_migrations.Init)
 	eventsource.GetManager().Init()
 
-	mustInitCtx(ctx, syncAppPathForGit)
+	mustInitCtx(ctx, syncAppConfForGit)
 
-	if setting.SSH.StartBuiltinServer {
-		ssh.Listen(setting.SSH.ListenHost, setting.SSH.ListenPort, setting.SSH.ServerCiphers, setting.SSH.ServerKeyExchanges, setting.SSH.ServerMACs)
-		log.Info("SSH server started on %s:%d. Cipher list (%v), key exchange algorithms (%v), MACs (%v)", setting.SSH.ListenHost, setting.SSH.ListenPort, setting.SSH.ServerCiphers, setting.SSH.ServerKeyExchanges, setting.SSH.ServerMACs)
-	} else {
-		ssh.Unused()
-	}
+	mustInit(ssh.Init)
+
 	auth.Init()
 	svg.Init()
+
+	// Finally start up the cron
+	cron.NewContext(ctx)
 }
 
 // NormalRoutes represents non install routes
-func NormalRoutes() *web.Route {
+func NormalRoutes(ctx context.Context) *web.Route {
+	ctx, _ = templates.HTMLRenderer(ctx)
 	r := web.NewRoute()
 	for _, middle := range common.Middlewares() {
 		r.Use(middle)
 	}
 
-	sessioner := session.Sessioner(session.Options{
-		Provider:       setting.SessionConfig.Provider,
-		ProviderConfig: setting.SessionConfig.ProviderConfig,
-		CookieName:     setting.SessionConfig.CookieName,
-		CookiePath:     setting.SessionConfig.CookiePath,
-		Gclifetime:     setting.SessionConfig.Gclifetime,
-		Maxlifetime:    setting.SessionConfig.Maxlifetime,
-		Secure:         setting.SessionConfig.Secure,
-		SameSite:       setting.SessionConfig.SameSite,
-		Domain:         setting.SessionConfig.Domain,
-	})
-
-	r.Mount("/", web_routers.Routes(sessioner))
-	r.Mount("/api/v1", apiv1.Routes(sessioner))
+	r.Mount("/", web_routers.Routes(ctx))
+	r.Mount("/api/v1", apiv1.Routes(ctx))
 	r.Mount("/api/internal", private.Routes())
+
+	if setting.Packages.Enabled {
+		// Add endpoints to match common package manager APIs
+
+		// This implements package support for most package managers
+		r.Mount("/api/packages", packages_router.CommonRoutes(ctx))
+
+		// This implements the OCI API (Note this is not preceded by /api but is instead /v2)
+		r.Mount("/v2", packages_router.ContainerRoutes(ctx))
+	}
 	return r
 }

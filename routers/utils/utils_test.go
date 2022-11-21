@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"code.gitea.io/gitea/modules/setting"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,23 +16,6 @@ func TestRemoveUsernameParameterSuffix(t *testing.T) {
 	assert.Equal(t, "foobar", RemoveUsernameParameterSuffix("foobar (Foo Bar)"))
 	assert.Equal(t, "foobar", RemoveUsernameParameterSuffix("foobar"))
 	assert.Equal(t, "", RemoveUsernameParameterSuffix(""))
-}
-
-func TestIsValidSlackChannel(t *testing.T) {
-	tt := []struct {
-		channelName string
-		expected    bool
-	}{
-		{"gitea", true},
-		{"  ", false},
-		{"#", false},
-		{"gitea   ", true},
-		{"  gitea", true},
-	}
-
-	for _, v := range tt {
-		assert.Equal(t, v.expected, IsValidSlackChannel(v.channelName))
-	}
 }
 
 func TestIsExternalURL(t *testing.T) {

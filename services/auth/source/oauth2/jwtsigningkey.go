@@ -25,17 +25,17 @@ import (
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/util"
 
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v4"
 	ini "gopkg.in/ini.v1"
 )
 
 // ErrInvalidAlgorithmType represents an invalid algorithm error.
 type ErrInvalidAlgorithmType struct {
-	Algorightm string
+	Algorithm string
 }
 
 func (err ErrInvalidAlgorithmType) Error() string {
-	return fmt.Sprintf("JWT signing algorithm is not supported: %s", err.Algorightm)
+	return fmt.Sprintf("JWT signing algorithm is not supported: %s", err.Algorithm)
 }
 
 // JWTSigningKey represents a algorithm/key pair to sign JWTs
@@ -339,7 +339,7 @@ func InitSigningKey() error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("Error while loading or creating JWT key: %v", err)
+		return fmt.Errorf("Error while loading or creating JWT key: %w", err)
 	}
 
 	signingKey, err := CreateJWTSigningKey(setting.OAuth2.JWTSigningAlgorithm, key)
@@ -364,7 +364,7 @@ func loadOrCreateSymmetricKey() (interface{}, error) {
 			return nil, err
 		}
 
-		setting.CreateOrAppendToCustomConf(func(cfg *ini.File) {
+		setting.CreateOrAppendToCustomConf("oauth2.JWT_SECRET", func(cfg *ini.File) {
 			secretBase64 := base64.RawURLEncoding.EncodeToString(key)
 			cfg.Section("oauth2").Key("JWT_SECRET").SetValue(secretBase64)
 		})
@@ -410,7 +410,7 @@ func loadOrCreateAsymmetricKey() (interface{}, error) {
 				return err
 			}
 
-			f, err := os.OpenFile(keyPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+			f, err := os.OpenFile(keyPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 			if err != nil {
 				return err
 			}

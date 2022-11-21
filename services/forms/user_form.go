@@ -40,7 +40,8 @@ type InstallForm struct {
 	AppURL       string `binding:"Required"`
 	LogRootPath  string `binding:"Required"`
 
-	SMTPHost        string
+	SMTPAddr        string
+	SMTPPort        string
 	SMTPFrom        string
 	SMTPUser        string `binding:"OmitEmpty;MaxSize(254)" locale:"install.mailer_user"`
 	SMTPPasswd      string
@@ -59,14 +60,20 @@ type InstallForm struct {
 	DefaultKeepEmailPrivate        bool
 	DefaultAllowCreateOrganization bool
 	DefaultEnableTimetracking      bool
+	EnableUpdateChecker            bool
 	NoReplyAddress                 string
 
 	PasswordAlgorithm string
 
-	AdminName          string `binding:"OmitEmpty;AlphaDashDot;MaxSize(30)" locale:"install.admin_name"`
+	AdminName          string `binding:"OmitEmpty;Username;MaxSize(30)" locale:"install.admin_name"`
 	AdminPasswd        string `binding:"OmitEmpty;MaxSize(255)" locale:"install.admin_password"`
 	AdminConfirmPasswd string
 	AdminEmail         string `binding:"OmitEmpty;MinSize(3);MaxSize(254);Include(@)" locale:"install.admin_email"`
+
+	// ReinstallConfirmFirst we can not use 1/2/3 or A/B/C here, there is a framework bug, can not parse "reinstall_confirm_1" or "reinstall_confirm_a"
+	ReinstallConfirmFirst  bool
+	ReinstallConfirmSecond bool
+	ReinstallConfirmThird  bool
 }
 
 // Validate validates the fields
@@ -84,12 +91,13 @@ func (f *InstallForm) Validate(req *http.Request, errs binding.Errors) binding.E
 
 // RegisterForm form for registering
 type RegisterForm struct {
-	UserName           string `binding:"Required;AlphaDashDot;MaxSize(40)"`
+	UserName           string `binding:"Required;Username;MaxSize(40)"`
 	Email              string `binding:"Required;MaxSize(254)"`
 	Password           string `binding:"MaxSize(255)"`
 	Retype             string
 	GRecaptchaResponse string `form:"g-recaptcha-response"`
 	HcaptchaResponse   string `form:"h-captcha-response"`
+	McaptchaResponse   string `form:"m-captcha-response"`
 }
 
 // Validate validates the fields
@@ -235,12 +243,11 @@ func (f *IntrospectTokenForm) Validate(req *http.Request, errs binding.Errors) b
 
 // UpdateProfileForm form for updating profile
 type UpdateProfileForm struct {
-	Name                string `binding:"AlphaDashDot;MaxSize(40)"`
+	Name                string `binding:"Username;MaxSize(40)"`
 	FullName            string `binding:"MaxSize(100)"`
 	KeepEmailPrivate    bool
 	Website             string `binding:"ValidSiteUrl;MaxSize(255)"`
 	Location            string `binding:"MaxSize(50)"`
-	Language            string
 	Description         string `binding:"MaxSize(255)"`
 	Visibility          structs.VisibleType
 	KeepActivityPrivate bool
@@ -248,6 +255,17 @@ type UpdateProfileForm struct {
 
 // Validate validates the fields
 func (f *UpdateProfileForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
+	ctx := context.GetContext(req)
+	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
+}
+
+// UpdateLanguageForm form for updating profile
+type UpdateLanguageForm struct {
+	Language string
+}
+
+// Validate validates the fields
+func (f *UpdateLanguageForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
 	ctx := context.GetContext(req)
 	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
 }
@@ -334,12 +352,13 @@ func (f *AddOpenIDForm) Validate(req *http.Request, errs binding.Errors) binding
 
 // AddKeyForm form for adding SSH/GPG key
 type AddKeyForm struct {
-	Type       string `binding:"OmitEmpty"`
-	Title      string `binding:"Required;MaxSize(50)"`
-	Content    string `binding:"Required"`
-	Signature  string `binding:"OmitEmpty"`
-	KeyID      string `binding:"OmitEmpty"`
-	IsWritable bool
+	Type        string `binding:"OmitEmpty"`
+	Title       string `binding:"Required;MaxSize(50)"`
+	Content     string `binding:"Required"`
+	Signature   string `binding:"OmitEmpty"`
+	KeyID       string `binding:"OmitEmpty"`
+	Fingerprint string `binding:"OmitEmpty"`
+	IsWritable  bool
 }
 
 // Validate validates the fields
@@ -361,8 +380,9 @@ func (f *NewAccessTokenForm) Validate(req *http.Request, errs binding.Errors) bi
 
 // EditOAuth2ApplicationForm form for editing oauth2 applications
 type EditOAuth2ApplicationForm struct {
-	Name        string `binding:"Required;MaxSize(255)" form:"application_name"`
-	RedirectURI string `binding:"Required" form:"redirect_uri"`
+	Name               string `binding:"Required;MaxSize(255)" form:"application_name"`
+	RedirectURI        string `binding:"Required" form:"redirect_uri"`
+	ConfidentialClient bool   `form:"confidential_client"`
 }
 
 // Validate validates the fields
@@ -393,24 +413,36 @@ func (f *TwoFactorScratchAuthForm) Validate(req *http.Request, errs binding.Erro
 	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
 }
 
-// U2FRegistrationForm for reserving an U2F name
-type U2FRegistrationForm struct {
+// WebauthnRegistrationForm for reserving an WebAuthn name
+type WebauthnRegistrationForm struct {
 	Name string `binding:"Required"`
 }
 
 // Validate validates the fields
-func (f *U2FRegistrationForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
+func (f *WebauthnRegistrationForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
 	ctx := context.GetContext(req)
 	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
 }
 
-// U2FDeleteForm for deleting U2F keys
-type U2FDeleteForm struct {
+// WebauthnDeleteForm for deleting WebAuthn keys
+type WebauthnDeleteForm struct {
 	ID int64 `binding:"Required"`
 }
 
 // Validate validates the fields
-func (f *U2FDeleteForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
+func (f *WebauthnDeleteForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
+	ctx := context.GetContext(req)
+	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
+}
+
+// PackageSettingForm form for package settings
+type PackageSettingForm struct {
+	Action string
+	RepoID int64 `form:"repo_id"`
+}
+
+// Validate validates the fields
+func (f *PackageSettingForm) Validate(req *http.Request, errs binding.Errors) binding.Errors {
 	ctx := context.GetContext(req)
 	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
 }

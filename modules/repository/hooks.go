@@ -5,19 +5,14 @@
 package repository
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/db"
 	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/util"
-
-	"xorm.io/builder"
 )
 
 func getHookTemplates() (hookNames, hookTpls, giteaHookTpls []string) {
@@ -110,7 +105,7 @@ done
 		giteaHookTpls = append(giteaHookTpls, "")
 	}
 
-	return
+	return hookNames, hookTpls, giteaHookTpls
 }
 
 // CreateDelegateHooks creates all the hooks scripts for the repo
@@ -128,30 +123,30 @@ func createDelegateHooks(repoPath string) (err error) {
 		newHookPath := filepath.Join(hookDir, hookName+".d", "gitea")
 
 		if err := os.MkdirAll(filepath.Join(hookDir, hookName+".d"), os.ModePerm); err != nil {
-			return fmt.Errorf("create hooks dir '%s': %v", filepath.Join(hookDir, hookName+".d"), err)
+			return fmt.Errorf("create hooks dir '%s': %w", filepath.Join(hookDir, hookName+".d"), err)
 		}
 
 		// WARNING: This will override all old server-side hooks
 		if err = util.Remove(oldHookPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("unable to pre-remove old hook file '%s' prior to rewriting: %v ", oldHookPath, err)
+			return fmt.Errorf("unable to pre-remove old hook file '%s' prior to rewriting: %w ", oldHookPath, err)
 		}
-		if err = os.WriteFile(oldHookPath, []byte(hookTpls[i]), 0777); err != nil {
-			return fmt.Errorf("write old hook file '%s': %v", oldHookPath, err)
+		if err = os.WriteFile(oldHookPath, []byte(hookTpls[i]), 0o777); err != nil {
+			return fmt.Errorf("write old hook file '%s': %w", oldHookPath, err)
 		}
 
 		if err = ensureExecutable(oldHookPath); err != nil {
-			return fmt.Errorf("Unable to set %s executable. Error %v", oldHookPath, err)
+			return fmt.Errorf("Unable to set %s executable. Error %w", oldHookPath, err)
 		}
 
 		if err = util.Remove(newHookPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("unable to pre-remove new hook file '%s' prior to rewriting: %v", newHookPath, err)
+			return fmt.Errorf("unable to pre-remove new hook file '%s' prior to rewriting: %w", newHookPath, err)
 		}
-		if err = os.WriteFile(newHookPath, []byte(giteaHookTpls[i]), 0777); err != nil {
-			return fmt.Errorf("write new hook file '%s': %v", newHookPath, err)
+		if err = os.WriteFile(newHookPath, []byte(giteaHookTpls[i]), 0o777); err != nil {
+			return fmt.Errorf("write new hook file '%s': %w", newHookPath, err)
 		}
 
 		if err = ensureExecutable(newHookPath); err != nil {
-			return fmt.Errorf("Unable to set %s executable. Error %v", oldHookPath, err)
+			return fmt.Errorf("Unable to set %s executable. Error %w", oldHookPath, err)
 		}
 	}
 
@@ -159,11 +154,15 @@ func createDelegateHooks(repoPath string) (err error) {
 }
 
 func checkExecutable(filename string) bool {
+	// windows has no concept of a executable bit
+	if runtime.GOOS == "windows" {
+		return true
+	}
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
 		return false
 	}
-	return (fileInfo.Mode() & 0100) > 0
+	return (fileInfo.Mode() & 0o100) > 0
 }
 
 func ensureExecutable(filename string) error {
@@ -171,10 +170,10 @@ func ensureExecutable(filename string) error {
 	if err != nil {
 		return err
 	}
-	if (fileInfo.Mode() & 0100) > 0 {
+	if (fileInfo.Mode() & 0o100) > 0 {
 		return nil
 	}
-	mode := fileInfo.Mode() | 0100
+	mode := fileInfo.Mode() | 0o100
 	return os.Chmod(filename, mode)
 }
 
@@ -239,39 +238,4 @@ func CheckDelegateHooks(repoPath string) ([]string, error) {
 		}
 	}
 	return results, nil
-}
-
-// SyncRepositoryHooks rewrites all repositories' pre-receive, update and post-receive hooks
-// to make sure the binary and custom conf path are up-to-date.
-func SyncRepositoryHooks(ctx context.Context) error {
-	log.Trace("Doing: SyncRepositoryHooks")
-
-	if err := db.Iterate(
-		db.DefaultContext,
-		new(models.Repository),
-		builder.Gt{"id": 0},
-		func(idx int, bean interface{}) error {
-			repo := bean.(*models.Repository)
-			select {
-			case <-ctx.Done():
-				return models.ErrCancelledf("before sync repository hooks for %s", repo.FullName())
-			default:
-			}
-
-			if err := createDelegateHooks(repo.RepoPath()); err != nil {
-				return fmt.Errorf("SyncRepositoryHook: %v", err)
-			}
-			if repo.HasWiki() {
-				if err := createDelegateHooks(repo.WikiPath()); err != nil {
-					return fmt.Errorf("SyncRepositoryHook: %v", err)
-				}
-			}
-			return nil
-		},
-	); err != nil {
-		return err
-	}
-
-	log.Trace("Finished: SyncRepositoryHooks")
-	return nil
 }

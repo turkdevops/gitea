@@ -108,9 +108,6 @@ type swaggerParameterBodies struct {
 	EditUserOption api.EditUserOption
 
 	// in:body
-	MigrateRepoForm forms.MigrateRepoForm
-
-	// in:body
 	EditAttachmentOptions api.EditAttachmentOptions
 
 	// in:body
@@ -169,4 +166,10 @@ type swaggerParameterBodies struct {
 
 	// in:body
 	UserSettingsOptions api.UserSettingsOptions
+
+	// in:body
+	CreateWikiPageOptions api.CreateWikiPageOptions
+
+	// in:body
+	CreatePushMirrorOption api.CreatePushMirrorOption
 }

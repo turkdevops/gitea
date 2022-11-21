@@ -7,7 +7,7 @@ package webhook
 import (
 	"testing"
 
-	"code.gitea.io/gitea/models"
+	webhook_model "code.gitea.io/gitea/models/webhook"
 	api "code.gitea.io/gitea/modules/structs"
 
 	"github.com/stretchr/testify/assert"
@@ -125,7 +125,7 @@ func TestFeishuPayload(t *testing.T) {
 		p.Action = api.HookIssueReviewed
 
 		d := new(FeishuPayload)
-		pl, err := d.Review(p, models.HookEventPullRequestReviewApproved)
+		pl, err := d.Review(p, webhook_model.HookEventPullRequestReviewApproved)
 		require.NoError(t, err)
 		require.NotNil(t, pl)
 		require.IsType(t, &FeishuPayload{}, pl)
@@ -143,6 +143,35 @@ func TestFeishuPayload(t *testing.T) {
 		require.IsType(t, &FeishuPayload{}, pl)
 
 		assert.Equal(t, "[test/repo] Repository created", pl.(*FeishuPayload).Content.Text)
+	})
+
+	t.Run("Wiki", func(t *testing.T) {
+		p := wikiTestPayload()
+
+		d := new(FeishuPayload)
+		p.Action = api.HookWikiCreated
+		pl, err := d.Wiki(p)
+		require.NoError(t, err)
+		require.NotNil(t, pl)
+		require.IsType(t, &FeishuPayload{}, pl)
+
+		assert.Equal(t, "[test/repo] New wiki page 'index' (Wiki change comment) by user1", pl.(*FeishuPayload).Content.Text)
+
+		p.Action = api.HookWikiEdited
+		pl, err = d.Wiki(p)
+		require.NoError(t, err)
+		require.NotNil(t, pl)
+		require.IsType(t, &FeishuPayload{}, pl)
+
+		assert.Equal(t, "[test/repo] Wiki page 'index' edited (Wiki change comment) by user1", pl.(*FeishuPayload).Content.Text)
+
+		p.Action = api.HookWikiDeleted
+		pl, err = d.Wiki(p)
+		require.NoError(t, err)
+		require.NotNil(t, pl)
+		require.IsType(t, &FeishuPayload{}, pl)
+
+		assert.Equal(t, "[test/repo] Wiki page 'index' deleted by user1", pl.(*FeishuPayload).Content.Text)
 	})
 
 	t.Run("Release", func(t *testing.T) {

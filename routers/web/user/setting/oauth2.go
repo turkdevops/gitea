@@ -5,79 +5,40 @@
 package setting
 
 import (
-	"fmt"
-	"net/http"
-
-	"code.gitea.io/gitea/models/login"
 	"code.gitea.io/gitea/modules/base"
 	"code.gitea.io/gitea/modules/context"
-	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/services/forms"
 )
 
 const (
-	tplSettingsOAuthApplications base.TplName = "user/settings/applications_oauth2_edit"
+	tplSettingsOAuthApplicationEdit base.TplName = "user/settings/applications_oauth2_edit"
 )
+
+func newOAuth2CommonHandlers(userID int64) *OAuth2CommonHandlers {
+	return &OAuth2CommonHandlers{
+		OwnerID:            userID,
+		BasePathList:       setting.AppSubURL + "/user/settings/applications",
+		BasePathEditPrefix: setting.AppSubURL + "/user/settings/applications/oauth2",
+		TplAppEdit:         tplSettingsOAuthApplicationEdit,
+	}
+}
 
 // OAuthApplicationsPost response for adding a oauth2 application
 func OAuthApplicationsPost(ctx *context.Context) {
-	form := web.GetForm(ctx).(*forms.EditOAuth2ApplicationForm)
 	ctx.Data["Title"] = ctx.Tr("settings")
 	ctx.Data["PageIsSettingsApplications"] = true
 
-	if ctx.HasError() {
-		loadApplicationsData(ctx)
-
-		ctx.HTML(http.StatusOK, tplSettingsApplications)
-		return
-	}
-	// TODO validate redirect URI
-	app, err := login.CreateOAuth2Application(login.CreateOAuth2ApplicationOptions{
-		Name:         form.Name,
-		RedirectURIs: []string{form.RedirectURI},
-		UserID:       ctx.User.ID,
-	})
-	if err != nil {
-		ctx.ServerError("CreateOAuth2Application", err)
-		return
-	}
-	ctx.Flash.Success(ctx.Tr("settings.create_oauth2_application_success"))
-	ctx.Data["App"] = app
-	ctx.Data["ClientSecret"], err = app.GenerateClientSecret()
-	if err != nil {
-		ctx.ServerError("GenerateClientSecret", err)
-		return
-	}
-	ctx.HTML(http.StatusOK, tplSettingsOAuthApplications)
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.AddApp(ctx)
 }
 
 // OAuthApplicationsEdit response for editing oauth2 application
 func OAuthApplicationsEdit(ctx *context.Context) {
-	form := web.GetForm(ctx).(*forms.EditOAuth2ApplicationForm)
 	ctx.Data["Title"] = ctx.Tr("settings")
 	ctx.Data["PageIsSettingsApplications"] = true
 
-	if ctx.HasError() {
-		loadApplicationsData(ctx)
-
-		ctx.HTML(http.StatusOK, tplSettingsApplications)
-		return
-	}
-	// TODO validate redirect URI
-	var err error
-	if ctx.Data["App"], err = login.UpdateOAuth2Application(login.UpdateOAuth2ApplicationOptions{
-		ID:           ctx.ParamsInt64("id"),
-		Name:         form.Name,
-		RedirectURIs: []string{form.RedirectURI},
-		UserID:       ctx.User.ID,
-	}); err != nil {
-		ctx.ServerError("UpdateOAuth2Application", err)
-		return
-	}
-	ctx.Flash.Success(ctx.Tr("settings.update_oauth2_application_success"))
-	ctx.HTML(http.StatusOK, tplSettingsOAuthApplications)
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.EditSave(ctx)
 }
 
 // OAuthApplicationsRegenerateSecret handles the post request for regenerating the secret
@@ -85,75 +46,24 @@ func OAuthApplicationsRegenerateSecret(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("settings")
 	ctx.Data["PageIsSettingsApplications"] = true
 
-	app, err := login.GetOAuth2ApplicationByID(ctx.ParamsInt64("id"))
-	if err != nil {
-		if login.IsErrOAuthApplicationNotFound(err) {
-			ctx.NotFound("Application not found", err)
-			return
-		}
-		ctx.ServerError("GetOAuth2ApplicationByID", err)
-		return
-	}
-	if app.UID != ctx.User.ID {
-		ctx.NotFound("Application not found", nil)
-		return
-	}
-	ctx.Data["App"] = app
-	ctx.Data["ClientSecret"], err = app.GenerateClientSecret()
-	if err != nil {
-		ctx.ServerError("GenerateClientSecret", err)
-		return
-	}
-	ctx.Flash.Success(ctx.Tr("settings.update_oauth2_application_success"))
-	ctx.HTML(http.StatusOK, tplSettingsOAuthApplications)
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.RegenerateSecret(ctx)
 }
 
 // OAuth2ApplicationShow displays the given application
 func OAuth2ApplicationShow(ctx *context.Context) {
-	app, err := login.GetOAuth2ApplicationByID(ctx.ParamsInt64("id"))
-	if err != nil {
-		if login.IsErrOAuthApplicationNotFound(err) {
-			ctx.NotFound("Application not found", err)
-			return
-		}
-		ctx.ServerError("GetOAuth2ApplicationByID", err)
-		return
-	}
-	if app.UID != ctx.User.ID {
-		ctx.NotFound("Application not found", nil)
-		return
-	}
-	ctx.Data["App"] = app
-	ctx.HTML(http.StatusOK, tplSettingsOAuthApplications)
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.EditShow(ctx)
 }
 
 // DeleteOAuth2Application deletes the given oauth2 application
 func DeleteOAuth2Application(ctx *context.Context) {
-	if err := login.DeleteOAuth2Application(ctx.FormInt64("id"), ctx.User.ID); err != nil {
-		ctx.ServerError("DeleteOAuth2Application", err)
-		return
-	}
-	log.Trace("OAuth2 Application deleted: %s", ctx.User.Name)
-
-	ctx.Flash.Success(ctx.Tr("settings.remove_oauth2_application_success"))
-	ctx.JSON(http.StatusOK, map[string]interface{}{
-		"redirect": setting.AppSubURL + "/user/settings/applications",
-	})
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.DeleteApp(ctx)
 }
 
 // RevokeOAuth2Grant revokes the grant with the given id
 func RevokeOAuth2Grant(ctx *context.Context) {
-	if ctx.User.ID == 0 || ctx.FormInt64("id") == 0 {
-		ctx.ServerError("RevokeOAuth2Grant", fmt.Errorf("user id or grant id is zero"))
-		return
-	}
-	if err := login.RevokeOAuth2Grant(ctx.FormInt64("id"), ctx.User.ID); err != nil {
-		ctx.ServerError("RevokeOAuth2Grant", err)
-		return
-	}
-
-	ctx.Flash.Success(ctx.Tr("settings.revoke_oauth2_grant_success"))
-	ctx.JSON(http.StatusOK, map[string]interface{}{
-		"redirect": setting.AppSubURL + "/user/settings/applications",
-	})
+	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
+	oa.RevokeGrant(ctx)
 }

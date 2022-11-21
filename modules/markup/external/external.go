@@ -5,7 +5,6 @@
 package external
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +34,11 @@ type Renderer struct {
 	*setting.MarkupRenderer
 }
 
+var (
+	_ markup.PostProcessRenderer = (*Renderer)(nil)
+	_ markup.ExternalRenderer    = (*Renderer)(nil)
+)
+
 // Name returns the external tool name
 func (p *Renderer) Name() string {
 	return p.MarkupName
@@ -53,6 +57,16 @@ func (p *Renderer) Extensions() []string {
 // SanitizerRules implements markup.Renderer
 func (p *Renderer) SanitizerRules() []setting.MarkupSanitizerRule {
 	return p.MarkupSanitizerRules
+}
+
+// SanitizerDisabled disabled sanitize if return true
+func (p *Renderer) SanitizerDisabled() bool {
+	return p.RenderContentMode == setting.RenderContentModeNoSanitizer || p.RenderContentMode == setting.RenderContentModeIframe
+}
+
+// DisplayInIFrame represents whether render the content with an iframe
+func (p *Renderer) DisplayInIFrame() bool {
+	return p.RenderContentMode == setting.RenderContentModeIframe
 }
 
 func envMark(envName string) string {
@@ -76,7 +90,7 @@ func (p *Renderer) Render(ctx *markup.RenderContext, input io.Reader, output io.
 		// write to temp file
 		f, err := os.CreateTemp("", "gitea_input")
 		if err != nil {
-			return fmt.Errorf("%s create temp file when rendering %s failed: %v", p.Name(), p.Command, err)
+			return fmt.Errorf("%s create temp file when rendering %s failed: %w", p.Name(), p.Command, err)
 		}
 		tmpPath := f.Name()
 		defer func() {
@@ -88,12 +102,12 @@ func (p *Renderer) Render(ctx *markup.RenderContext, input io.Reader, output io.
 		_, err = io.Copy(f, input)
 		if err != nil {
 			f.Close()
-			return fmt.Errorf("%s write data to temp file when rendering %s failed: %v", p.Name(), p.Command, err)
+			return fmt.Errorf("%s write data to temp file when rendering %s failed: %w", p.Name(), p.Command, err)
 		}
 
 		err = f.Close()
 		if err != nil {
-			return fmt.Errorf("%s close temp file when rendering %s failed: %v", p.Name(), p.Command, err)
+			return fmt.Errorf("%s close temp file when rendering %s failed: %w", p.Name(), p.Command, err)
 		}
 		args = append(args, f.Name())
 	}
@@ -107,11 +121,8 @@ func (p *Renderer) Render(ctx *markup.RenderContext, input io.Reader, output io.
 		ctx.Ctx = graceful.GetManager().ShutdownContext()
 	}
 
-	processCtx, cancel := context.WithCancel(ctx.Ctx)
-	defer cancel()
-
-	pid := process.GetManager().Add(fmt.Sprintf("Render [%s] for %s", commands[0], ctx.URLPrefix), cancel)
-	defer process.GetManager().Remove(pid)
+	processCtx, _, finished := process.GetManager().AddContext(ctx.Ctx, fmt.Sprintf("Render [%s] for %s", commands[0], ctx.URLPrefix))
+	defer finished()
 
 	cmd := exec.CommandContext(processCtx, commands[0], args...)
 	cmd.Env = append(
@@ -123,8 +134,10 @@ func (p *Renderer) Render(ctx *markup.RenderContext, input io.Reader, output io.
 		cmd.Stdin = input
 	}
 	cmd.Stdout = output
+	process.SetSysProcAttribute(cmd)
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s render run command %s %v failed: %v", p.Name(), commands[0], args, err)
+		return fmt.Errorf("%s render run command %s %v failed: %w", p.Name(), commands[0], args, err)
 	}
 	return nil
 }

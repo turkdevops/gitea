@@ -8,7 +8,6 @@ package forms
 import (
 	"net/http"
 
-	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/modules/context"
 	"code.gitea.io/gitea/modules/structs"
 	"code.gitea.io/gitea/modules/web/middleware"
@@ -25,7 +24,7 @@ import (
 
 // CreateOrgForm form for creating organization
 type CreateOrgForm struct {
-	OrgName                   string `binding:"Required;AlphaDashDot;MaxSize(40)" locale:"org.org_name_holder"`
+	OrgName                   string `binding:"Required;Username;MaxSize(40)" locale:"org.org_name_holder"`
 	Visibility                structs.VisibleType
 	RepoAdminChangeTeamAccess bool
 }
@@ -38,7 +37,7 @@ func (f *CreateOrgForm) Validate(req *http.Request, errs binding.Errors) binding
 
 // UpdateOrgSettingForm form for updating organization settings
 type UpdateOrgSettingForm struct {
-	Name                      string `binding:"Required;AlphaDashDot;MaxSize(40)" locale:"org.org_name_holder"`
+	Name                      string `binding:"Required;Username;MaxSize(40)" locale:"org.org_name_holder"`
 	FullName                  string `binding:"MaxSize(100)"`
 	Description               string `binding:"MaxSize(255)"`
 	Website                   string `binding:"ValidUrl;MaxSize(255)"`
@@ -66,7 +65,6 @@ type CreateTeamForm struct {
 	TeamName         string `binding:"Required;AlphaDashDot;MaxSize(30)"`
 	Description      string `binding:"MaxSize(255)"`
 	Permission       string
-	Units            []models.UnitType
 	RepoAccess       string
 	CanCreateOrgRepo bool
 }

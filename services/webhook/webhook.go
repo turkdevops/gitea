@@ -5,78 +5,84 @@
 package webhook
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
-	"code.gitea.io/gitea/models"
+	repo_model "code.gitea.io/gitea/models/repo"
+	user_model "code.gitea.io/gitea/models/user"
+	webhook_model "code.gitea.io/gitea/models/webhook"
 	"code.gitea.io/gitea/modules/git"
+	"code.gitea.io/gitea/modules/graceful"
 	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/queue"
 	"code.gitea.io/gitea/modules/setting"
 	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/sync"
 	"code.gitea.io/gitea/modules/util"
 
 	"github.com/gobwas/glob"
 )
 
 type webhook struct {
-	name           models.HookType
-	payloadCreator func(p api.Payloader, event models.HookEventType, meta string) (api.Payloader, error)
+	name           webhook_model.HookType
+	payloadCreator func(p api.Payloader, event webhook_model.HookEventType, meta string) (api.Payloader, error)
 }
 
-var (
-	webhooks = map[models.HookType]*webhook{
-		models.SLACK: {
-			name:           models.SLACK,
-			payloadCreator: GetSlackPayload,
-		},
-		models.DISCORD: {
-			name:           models.DISCORD,
-			payloadCreator: GetDiscordPayload,
-		},
-		models.DINGTALK: {
-			name:           models.DINGTALK,
-			payloadCreator: GetDingtalkPayload,
-		},
-		models.TELEGRAM: {
-			name:           models.TELEGRAM,
-			payloadCreator: GetTelegramPayload,
-		},
-		models.MSTEAMS: {
-			name:           models.MSTEAMS,
-			payloadCreator: GetMSTeamsPayload,
-		},
-		models.FEISHU: {
-			name:           models.FEISHU,
-			payloadCreator: GetFeishuPayload,
-		},
-		models.MATRIX: {
-			name:           models.MATRIX,
-			payloadCreator: GetMatrixPayload,
-		},
-		models.WECHATWORK: {
-			name:           models.WECHATWORK,
-			payloadCreator: GetWechatworkPayload,
-		},
-	}
-)
+var webhooks = map[webhook_model.HookType]*webhook{
+	webhook_model.SLACK: {
+		name:           webhook_model.SLACK,
+		payloadCreator: GetSlackPayload,
+	},
+	webhook_model.DISCORD: {
+		name:           webhook_model.DISCORD,
+		payloadCreator: GetDiscordPayload,
+	},
+	webhook_model.DINGTALK: {
+		name:           webhook_model.DINGTALK,
+		payloadCreator: GetDingtalkPayload,
+	},
+	webhook_model.TELEGRAM: {
+		name:           webhook_model.TELEGRAM,
+		payloadCreator: GetTelegramPayload,
+	},
+	webhook_model.MSTEAMS: {
+		name:           webhook_model.MSTEAMS,
+		payloadCreator: GetMSTeamsPayload,
+	},
+	webhook_model.FEISHU: {
+		name:           webhook_model.FEISHU,
+		payloadCreator: GetFeishuPayload,
+	},
+	webhook_model.MATRIX: {
+		name:           webhook_model.MATRIX,
+		payloadCreator: GetMatrixPayload,
+	},
+	webhook_model.WECHATWORK: {
+		name:           webhook_model.WECHATWORK,
+		payloadCreator: GetWechatworkPayload,
+	},
+	webhook_model.PACKAGIST: {
+		name:           webhook_model.PACKAGIST,
+		payloadCreator: GetPackagistPayload,
+	},
+}
 
 // RegisterWebhook registers a webhook
 func RegisterWebhook(name string, webhook *webhook) {
-	webhooks[models.HookType(name)] = webhook
+	webhooks[name] = webhook
 }
 
 // IsValidHookTaskType returns true if a webhook registered
 func IsValidHookTaskType(name string) bool {
-	if name == models.GITEA || name == models.GOGS {
+	if name == webhook_model.GITEA || name == webhook_model.GOGS {
 		return true
 	}
-	_, ok := webhooks[models.HookType(name)]
+	_, ok := webhooks[name]
 	return ok
 }
 
 // hookQueue is a global queue of web hooks
-var hookQueue = sync.NewUniqueQueue(setting.Webhook.QueueLength)
+var hookQueue queue.UniqueQueue
 
 // getPayloadBranch returns branch for hook event, if applicable.
 func getPayloadBranch(p api.Payloader) string {
@@ -97,17 +103,39 @@ func getPayloadBranch(p api.Payloader) string {
 	return ""
 }
 
-// PrepareWebhook adds special webhook to task queue for given payload.
-func PrepareWebhook(w *models.Webhook, repo *models.Repository, event models.HookEventType, p api.Payloader) error {
-	if err := prepareWebhook(w, repo, event, p); err != nil {
-		return err
+// EventSource represents the source of a webhook action. Repository and/or Owner must be set.
+type EventSource struct {
+	Repository *repo_model.Repository
+	Owner      *user_model.User
+}
+
+// handle delivers hook tasks
+func handle(data ...queue.Data) []queue.Data {
+	ctx := graceful.GetManager().HammerContext()
+
+	for _, taskID := range data {
+		task, err := webhook_model.GetHookTaskByID(ctx, taskID.(int64))
+		if err != nil {
+			log.Error("GetHookTaskByID failed: %v", err)
+		} else {
+			if err := Deliver(ctx, task); err != nil {
+				log.Error("webhook.Deliver failed: %v", err)
+			}
+		}
 	}
 
-	go hookQueue.Add(repo.ID)
 	return nil
 }
 
-func checkBranch(w *models.Webhook, branch string) bool {
+func enqueueHookTask(task *webhook_model.HookTask) error {
+	err := hookQueue.PushFunc(task.ID, nil)
+	if err != nil && err != queue.ErrAlreadyInQueue {
+		return err
+	}
+	return nil
+}
+
+func checkBranch(w *webhook_model.Webhook, branch string) bool {
 	if w.BranchFilter == "" || w.BranchFilter == "*" {
 		return true
 	}
@@ -122,7 +150,8 @@ func checkBranch(w *models.Webhook, branch string) bool {
 	return g.Match(branch)
 }
 
-func prepareWebhook(w *models.Webhook, repo *models.Repository, event models.HookEventType, p api.Payloader) error {
+// PrepareWebhook creates a hook task and enqueues it for processing
+func PrepareWebhook(ctx context.Context, w *webhook_model.Webhook, event webhook_model.HookEventType, p api.Payloader) error {
 	// Skip sending if webhooks are disabled.
 	if setting.DisableWebhooks {
 		return nil
@@ -141,7 +170,7 @@ func prepareWebhook(w *models.Webhook, repo *models.Repository, event models.Hoo
 	// Avoid sending "0 new commits" to non-integration relevant webhooks (e.g. slack, discord, etc.).
 	// Integration webhooks (e.g. drone) still receive the required data.
 	if pushEvent, ok := p.(*api.PushPayload); ok &&
-		w.Type != models.GITEA && w.Type != models.GOGS &&
+		w.Type != webhook_model.GITEA && w.Type != webhook_model.GOGS &&
 		len(pushEvent.Commits) == 0 {
 		return nil
 	}
@@ -161,59 +190,59 @@ func prepareWebhook(w *models.Webhook, repo *models.Repository, event models.Hoo
 	if ok {
 		payloader, err = webhook.payloadCreator(p, event, w.Meta)
 		if err != nil {
-			return fmt.Errorf("create payload for %s[%s]: %v", w.Type, event, err)
+			return fmt.Errorf("create payload for %s[%s]: %w", w.Type, event, err)
 		}
 	} else {
 		payloader = p
 	}
 
-	if err = models.CreateHookTask(&models.HookTask{
-		RepoID:    repo.ID,
+	task, err := webhook_model.CreateHookTask(ctx, &webhook_model.HookTask{
 		HookID:    w.ID,
 		Payloader: payloader,
 		EventType: event,
-	}); err != nil {
-		return fmt.Errorf("CreateHookTask: %v", err)
+	})
+	if err != nil {
+		return fmt.Errorf("CreateHookTask: %w", err)
 	}
-	return nil
+
+	return enqueueHookTask(task)
 }
 
 // PrepareWebhooks adds new webhooks to task queue for given payload.
-func PrepareWebhooks(repo *models.Repository, event models.HookEventType, p api.Payloader) error {
-	if err := prepareWebhooks(repo, event, p); err != nil {
-		return err
-	}
+func PrepareWebhooks(ctx context.Context, source EventSource, event webhook_model.HookEventType, p api.Payloader) error {
+	owner := source.Owner
 
-	go hookQueue.Add(repo.ID)
-	return nil
-}
+	var ws []*webhook_model.Webhook
 
-func prepareWebhooks(repo *models.Repository, event models.HookEventType, p api.Payloader) error {
-	ws, err := models.ListWebhooksByOpts(&models.ListWebhookOptions{
-		RepoID:   repo.ID,
-		IsActive: util.OptionalBoolTrue,
-	})
-	if err != nil {
-		return fmt.Errorf("GetActiveWebhooksByRepoID: %v", err)
-	}
-
-	// check if repo belongs to org and append additional webhooks
-	if repo.MustOwner().IsOrganization() {
-		// get hooks for org
-		orgHooks, err := models.ListWebhooksByOpts(&models.ListWebhookOptions{
-			OrgID:    repo.OwnerID,
+	if source.Repository != nil {
+		repoHooks, err := webhook_model.ListWebhooksByOpts(ctx, &webhook_model.ListWebhookOptions{
+			RepoID:   source.Repository.ID,
 			IsActive: util.OptionalBoolTrue,
 		})
 		if err != nil {
-			return fmt.Errorf("GetActiveWebhooksByOrgID: %v", err)
+			return fmt.Errorf("ListWebhooksByOpts: %w", err)
+		}
+		ws = append(ws, repoHooks...)
+
+		owner = source.Repository.MustOwner(ctx)
+	}
+
+	// check if owner is an org and append additional webhooks
+	if owner != nil && owner.IsOrganization() {
+		orgHooks, err := webhook_model.ListWebhooksByOpts(ctx, &webhook_model.ListWebhookOptions{
+			OrgID:    owner.ID,
+			IsActive: util.OptionalBoolTrue,
+		})
+		if err != nil {
+			return fmt.Errorf("ListWebhooksByOpts: %w", err)
 		}
 		ws = append(ws, orgHooks...)
 	}
 
 	// Add any admin-defined system webhooks
-	systemHooks, err := models.GetSystemWebhooks()
+	systemHooks, err := webhook_model.GetSystemWebhooks(ctx, util.OptionalBoolTrue)
 	if err != nil {
-		return fmt.Errorf("GetSystemWebhooks: %v", err)
+		return fmt.Errorf("GetSystemWebhooks: %w", err)
 	}
 	ws = append(ws, systemHooks...)
 
@@ -222,9 +251,19 @@ func prepareWebhooks(repo *models.Repository, event models.HookEventType, p api.
 	}
 
 	for _, w := range ws {
-		if err = prepareWebhook(w, repo, event, p); err != nil {
+		if err := PrepareWebhook(ctx, w, event, p); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// ReplayHookTask replays a webhook task
+func ReplayHookTask(ctx context.Context, w *webhook_model.Webhook, uuid string) error {
+	task, err := webhook_model.ReplayHookTask(ctx, w.ID, uuid)
+	if err != nil {
+		return err
+	}
+
+	return enqueueHookTask(task)
 }
