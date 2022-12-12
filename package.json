@@ -6,7 +6,7 @@
     "node": ">= 12.17.0"
   },
   "dependencies": {
-    "@claviska/jquery-minicolors": "2.3.5",
+    "@claviska/jquery-minicolors": "2.3.6",
     "@primer/octicons": "16.0.0",
     "add-asset-webpack-plugin": "2.0.1",
     "codemirror": "5.63.3",
